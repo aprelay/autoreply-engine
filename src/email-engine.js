@@ -31,6 +31,20 @@ export async function fetchNewEmails(account) {
     const lock = await client.getMailboxLock('INBOX');
 
     try {
+      // Check mailbox status first to avoid fetching when no new messages
+      const status = await client.status('INBOX', { uidNext: true, messages: true });
+      const serverUidNext = status.uidNext || 0;
+      
+      // If no new messages since last check, skip the fetch entirely
+      if (account.last_uid > 0 && serverUidNext <= account.last_uid + 1) {
+        console.log(`[IMAP] No new UIDs for ${account.email} (last: ${account.last_uid}, uidNext: ${serverUidNext})`);
+        // Still update check time
+        stmts.updateAccountLastCheck.run(account.last_uid, account.id);
+        lock.release();
+        await client.logout();
+        return [];
+      }
+
       // Fetch messages newer than last known UID
       const since = account.last_uid > 0 ? `${account.last_uid + 1}:*` : '1:*';
       let maxUid = account.last_uid;

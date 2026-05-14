@@ -170,6 +170,7 @@ const stmts = {
   getPendingReplies: db.prepare("SELECT e.*, a.campaign_link, a.persona_name, a.persona_title, a.reply_style, a.email as account_email, a.mode as account_mode FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.reply_status = 'draft' AND e.classification = 'real_reply' ORDER BY e.created_at ASC"),
   getScheduledReplies: db.prepare("SELECT e.*, a.* FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.reply_status = 'scheduled' AND e.reply_scheduled_for <= datetime('now') ORDER BY e.reply_scheduled_for ASC"),
   getApprovalQueue: db.prepare("SELECT e.*, a.email as account_email, a.persona_name, a.campaign_link FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.reply_status = 'draft' AND a.mode = 'approval' ORDER BY e.created_at DESC"),
+  getPendingEmails: db.prepare("SELECT * FROM emails WHERE classification = 'pending' ORDER BY id ASC"),
   insertEmail: db.prepare(`
     INSERT INTO emails (account_id, uid, message_id, from_email, from_name, to_email, subject,
       body_text, body_html, received_at, headers_json)

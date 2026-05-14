@@ -187,6 +187,114 @@ app.post('/api/emails/:id/approve', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── Regenerate reply for a specific email ───
+app.post('/api/emails/:id/regenerate', requireAuth, async (req, res) => {
+  try {
+    const email = stmts.getEmail.get(req.params.id);
+    if (!email) return res.status(404).json({ error: 'Not found' });
+    const account = stmts.getAccount.get(email.account_id);
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+
+    console.log(`[REGEN] Regenerating reply for ${email.from_email}...`);
+    const replyText = await generateReply(email, account);
+
+    stmts.updateEmailReply.run({
+      reply_status: 'draft',
+      reply_text: replyText,
+      reply_scheduled_for: null,
+      id: email.id,
+    });
+
+    logActivity(account.id, 'regenerated', `Reply regenerated for ${email.from_email}`, replyText.substring(0, 200));
+    res.json({ success: true, reply_text: replyText });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Reclassify a specific email ───
+app.post('/api/emails/:id/reclassify', requireAuth, async (req, res) => {
+  try {
+    const email = stmts.getEmail.get(req.params.id);
+    if (!email) return res.status(404).json({ error: 'Not found' });
+
+    // Reset classification
+    stmts.updateEmailClassification.run({
+      id: email.id,
+      classification: 'pending',
+      confidence: 0,
+      classification_reason: 'Reclassification requested',
+    });
+
+    const result = await classifyEmail(email);
+
+    // If now classified as real_reply and no reply exists, generate one
+    if (result.classification === 'real_reply' && (!email.reply_text || email.reply_status === 'skipped')) {
+      const account = stmts.getAccount.get(email.account_id);
+      if (account) {
+        const replyText = await generateReply(email, account);
+        stmts.updateEmailReply.run({
+          reply_status: 'draft',
+          reply_text: replyText,
+          reply_scheduled_for: null,
+          id: email.id,
+        });
+      }
+    }
+
+    res.json({ success: true, classification: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Process all pending emails (classify + generate replies) ───
+app.post('/api/emails/process-pending', requireAuth, async (req, res) => {
+  try {
+    const pending = stmts.getPendingEmails.all();
+    if (pending.length === 0) {
+      return res.json({ success: true, message: 'No pending emails', processed: 0 });
+    }
+
+    console.log(`[PROCESS] Processing ${pending.length} pending email(s)...`);
+    let processed = 0;
+    let realReplies = 0;
+
+    for (const email of pending) {
+      try {
+        const result = await classifyEmail(email);
+        console.log(`[PROCESS] ${email.from_email}: ${result.classification} (${(result.confidence * 100).toFixed(0)}%)`);
+
+        if (result.classification === 'real_reply') {
+          const account = stmts.getAccount.get(email.account_id);
+          if (account) {
+            console.log(`[PROCESS] Generating reply for ${email.from_email}...`);
+            const replyText = await generateReply(email, account);
+            stmts.updateEmailReply.run({
+              reply_status: account.mode === 'auto' ? 'scheduled' : 'draft',
+              reply_text: replyText,
+              reply_scheduled_for: account.mode === 'auto' ? new Date(Date.now() + 300000).toISOString() : null,
+              id: email.id,
+            });
+            realReplies++;
+          }
+        } else {
+          stmts.markEmailSkipped.run(`Classified as ${result.classification}: ${result.reason}`, email.id);
+        }
+
+        processed++;
+      } catch (e) {
+        console.error(`[PROCESS] Error processing ${email.from_email}:`, e.message);
+      }
+    }
+
+    logActivity(null, 'batch_process', `Processed ${processed} pending emails, ${realReplies} real replies`);
+    res.json({ success: true, processed, realReplies, total: pending.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/emails/:id/skip', requireAuth, (req, res) => {
   const email = stmts.getEmail.get(req.params.id);
   if (!email) return res.status(404).json({ error: 'Not found' });

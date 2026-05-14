@@ -1,11 +1,19 @@
 // ═══════════════════════════════════════════════════════════════
 // AUTOREPLY ENGINE — AI Email Classifier + Reply Generator
 // Supports: Google Gemini (native), OpenAI-compatible APIs
+// v1.2: Added reply quality validation, retry logic, model fallback
 // ═══════════════════════════════════════════════════════════════
 
 import { stmts, logActivity } from './database.js';
 
-let cachedProvider = null; // { type: 'gemini'|'openai', apiKey, model, baseUrl }
+let cachedProvider = null; // { type: 'gemini'|'openai'|'openrouter', apiKey, model, baseUrl }
+
+// ─── Fallback models for retry when primary model produces garbage ───
+const OPENROUTER_FALLBACK_MODELS = [
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'deepseek/deepseek-r1-0528:free',
+  'meta-llama/llama-4-maverick:free',
+];
 
 // ─── Get AI provider config from DB settings ───
 function getProvider() {
@@ -88,24 +96,89 @@ async function callOpenAI(apiKey, model, prompt, temperature = 0.1, maxTokens = 
 }
 
 // ─── Unified AI call — routes to correct provider ───
-async function callAI(prompt, temperature = 0.1, maxTokens = 256) {
+async function callAI(prompt, temperature = 0.1, maxTokens = 256, overrideModel = null) {
   const provider = getProvider();
   if (!provider) return null;
 
+  const modelToUse = overrideModel || provider.model;
+
   try {
     if (provider.type === 'gemini') {
-      return await callGemini(provider.apiKey, provider.model, prompt, temperature, maxTokens);
+      return await callGemini(provider.apiKey, modelToUse, prompt, temperature, maxTokens);
     } else if (provider.type === 'openrouter') {
       // OpenRouter uses OpenAI format with their base URL
-      return await callOpenAI(provider.apiKey, provider.model, prompt, temperature, maxTokens, 'https://openrouter.ai/api/v1');
+      return await callOpenAI(provider.apiKey, modelToUse, prompt, temperature, maxTokens, 'https://openrouter.ai/api/v1');
     } else {
-      return await callOpenAI(provider.apiKey, provider.model, prompt, temperature, maxTokens);
+      return await callOpenAI(provider.apiKey, modelToUse, prompt, temperature, maxTokens);
     }
   } catch (error) {
-    console.error(`[AI] ${provider.type} call failed:`, error.message);
-    logActivity(null, 'error', `AI call failed (${provider.type}): ${error.message}`);
+    console.error(`[AI] ${provider.type} call failed (model: ${modelToUse}):`, error.message);
+    logActivity(null, 'error', `AI call failed (${provider.type}/${modelToUse}): ${error.message}`);
     return null;
   }
+}
+
+// ─── Reply Quality Validation ───
+// Detects garbled/hallucinated output from unreliable free models
+function validateReplyQuality(replyText, recipientFirstName) {
+  if (!replyText || replyText.length < 30) {
+    return { valid: false, reason: 'Reply too short' };
+  }
+  if (replyText.length > 3000) {
+    return { valid: false, reason: `Reply too long (${replyText.length} chars)` };
+  }
+
+  // Check for excessive non-ASCII characters (garbled output indicator)
+  const nonAscii = replyText.replace(/[\x20-\x7E\n\r\t]/g, '');
+  const nonAsciiRatio = nonAscii.length / replyText.length;
+  if (nonAsciiRatio > 0.05) {
+    return { valid: false, reason: `Excessive non-ASCII characters (${(nonAsciiRatio * 100).toFixed(1)}%)` };
+  }
+
+  // Check for code patterns (model dumped code instead of a reply)
+  const codePatterns = [
+    /```/,
+    /function\s*\(/,
+    /const\s+\w+\s*=/,
+    /import\s+.*from/,
+    /<\/?(?:div|span|script|style|html|body|head)>/i,
+    /\{\{.*\}\}/,
+    /=>\s*\{/,
+  ];
+  let codeHits = 0;
+  for (const pat of codePatterns) {
+    if (pat.test(replyText)) codeHits++;
+  }
+  if (codeHits >= 2) {
+    return { valid: false, reason: `Contains code patterns (${codeHits} hits)` };
+  }
+
+  // Check for mixed/random language gibberish
+  // Chinese/Japanese/Korean characters in an English business email = garbled
+  const cjkChars = (replyText.match(/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g) || []).length;
+  if (cjkChars > 3) {
+    return { valid: false, reason: `Contains CJK characters (${cjkChars}) — likely garbled` };
+  }
+
+  // Check for hallucinated nonsense words (random character sequences)
+  const words = replyText.split(/\s+/);
+  let nonsenseWords = 0;
+  for (const word of words) {
+    const clean = word.replace(/[^a-zA-Z]/g, '');
+    if (clean.length > 15) nonsenseWords++; // Very long "words" are suspicious
+  }
+  if (nonsenseWords > 3) {
+    return { valid: false, reason: `Too many nonsense words (${nonsenseWords})` };
+  }
+
+  // Check it actually looks like an email reply (has a greeting or signoff)
+  const hasGreeting = /^(hi|hey|hello|dear|good\s)/im.test(replyText);
+  const hasSignoff = /(regards|best|sincerely|thanks|thank you|cheers|br,)/im.test(replyText);
+  if (!hasGreeting && !hasSignoff) {
+    return { valid: false, reason: 'Missing greeting and signoff — does not look like an email reply' };
+  }
+
+  return { valid: true };
 }
 
 // ─── Rule-based pre-classification (header analysis) ───
@@ -292,7 +365,7 @@ export async function classifyEmail(email) {
   return defaultResult;
 }
 
-// ─── Generate Reply ───
+// ─── Generate Reply (with quality validation + retry + fallback) ───
 export async function generateReply(email, account) {
   // Extract first name from sender
   let firstName = '';
@@ -307,7 +380,61 @@ export async function generateReply(email, account) {
   const personaTitle = account.persona_title || '';
   const campaignLink = account.campaign_link || 'https://example.com';
 
-  const prompt = `You are writing a reply to a business email. Write a professional, warm, human-sounding reply.
+  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink);
+  const provider = getProvider();
+
+  // Attempt 1: Primary model
+  let reply = await callAI(prompt, 0.7, 500);
+  let validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response from AI' };
+
+  if (validation.valid) {
+    console.log(`[REPLY] Primary model produced valid reply (${reply.length} chars)`);
+    return reply;
+  }
+
+  console.warn(`[REPLY] Primary model reply REJECTED: ${validation.reason}`);
+  if (reply) console.warn(`[REPLY] Bad reply preview: ${reply.substring(0, 120)}...`);
+
+  // Attempt 2: Retry primary model with lower temperature
+  reply = await callAI(prompt, 0.3, 500);
+  validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response' };
+
+  if (validation.valid) {
+    console.log(`[REPLY] Primary model retry (low temp) succeeded (${reply.length} chars)`);
+    return reply;
+  }
+
+  console.warn(`[REPLY] Primary model retry REJECTED: ${validation.reason}`);
+
+  // Attempt 3+: Try fallback models (OpenRouter only)
+  if (provider?.type === 'openrouter') {
+    for (const fallbackModel of OPENROUTER_FALLBACK_MODELS) {
+      if (fallbackModel === provider.model) continue; // Skip if same as primary
+      console.log(`[REPLY] Trying fallback model: ${fallbackModel}`);
+
+      reply = await callAI(prompt, 0.5, 500, fallbackModel);
+      validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response' };
+
+      if (validation.valid) {
+        console.log(`[REPLY] Fallback model ${fallbackModel} succeeded (${reply.length} chars)`);
+        logActivity(null, 'ai_fallback', `Used fallback model ${fallbackModel} for ${email.from_email}`);
+        return reply;
+      }
+
+      console.warn(`[REPLY] Fallback ${fallbackModel} REJECTED: ${validation.reason}`);
+    }
+  }
+
+  // Final fallback: template reply
+  console.warn(`[REPLY] All AI attempts failed for ${email.from_email} — using template fallback`);
+  logActivity(null, 'warning', `AI reply quality failed for ${email.from_email} — used template`,
+    `Last rejection: ${validation.reason}`);
+  return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email);
+}
+
+// ─── Build the reply generation prompt ───
+function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink) {
+  return `You are writing a reply to a business email. Write a professional, warm, human-sounding reply.
 
 CONTEXT:
 - You are "${personaName}"${personaTitle ? `, ${personaTitle}` : ''}
@@ -332,16 +459,10 @@ RULES:
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
 9. Do NOT use exclamation marks excessively
 10. Do NOT say "I hope this email finds you well" or similar cliches
+11. Write ONLY in English
+12. Do NOT include any code, HTML tags, or special characters
 
 Write ONLY the reply text, nothing else:`;
-
-  const reply = await callAI(prompt, 0.7, 500);
-  if (reply && reply.length > 20) {
-    return reply;
-  }
-
-  // Fallback to template
-  return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email);
 }
 
 // ─── Template fallback reply ───

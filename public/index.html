@@ -172,6 +172,7 @@
         <div class="panel" id="panel-approval">
           <div class="toolbar">
             <button class="btn btn-secondary btn-sm" onclick="loadApprovalQueue()"><i class="fas fa-sync"></i> Refresh</button>
+            <button class="btn btn-primary btn-sm" onclick="processPendingEmails()"><i class="fas fa-bolt"></i> Process Pending Emails</button>
             <span style="font-size:12px;color:var(--text3)" id="approvalInfo"></span>
           </div>
           <div id="approvalList"></div>
@@ -626,6 +627,7 @@
             <div class="actions">
               <button class="btn btn-success btn-sm" onclick="approveReply(${e.id})"><i class="fas fa-check"></i> Approve & Send</button>
               <button class="btn btn-primary btn-sm" onclick="editReply(${e.id})"><i class="fas fa-pen"></i> Edit & Send</button>
+              <button class="btn btn-secondary btn-sm" onclick="regenerateReply(${e.id})"><i class="fas fa-rotate"></i> Regenerate</button>
               <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id})"><i class="fas fa-ban"></i> Skip</button>
               <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><i class="fas fa-eye"></i> View Full</button>
             </div>
@@ -660,6 +662,24 @@
         toast('Email skipped', 'info');
         loadApprovalQueue();
         loadStats();
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function regenerateReply(id) {
+      toast('Regenerating reply with AI...', 'info');
+      try {
+        const r = await fetch(API(`/emails/${id}/regenerate`), { method:'POST', headers:{'Content-Type':'application/json'} }).then(r => r.json());
+        if (r.success) { toast('Reply regenerated successfully', 'success'); loadApprovalQueue(); }
+        else toast(r.error || 'Regeneration failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function processPendingEmails() {
+      toast('Processing pending emails...', 'info');
+      try {
+        const r = await fetch(API('/emails/process-pending'), { method:'POST', headers:{'Content-Type':'application/json'} }).then(r => r.json());
+        if (r.success) { toast(`Processed ${r.processed} email(s), ${r.realReplies} real replies`, 'success'); loadStats(); loadApprovalQueue(); loadEmails(); }
+        else toast(r.error || 'Processing failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
