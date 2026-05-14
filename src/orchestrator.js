@@ -4,7 +4,7 @@
 // v2.0: Multi-tenant — polls all active tenants, scoped guard/settings
 // ═══════════════════════════════════════════════════════════════
 
-import { globalStmts, logActivity, getTenantGuardSettings, tenantStmts } from './database.js';
+import { globalStmts, logActivity, getTenantGuardSettings, getTenantStmts, tenantStmts } from './database.js';
 import { fetchNewEmails, sendReply } from './email-engine.js';
 import { classifyEmail, generateReply } from './ai-classifier.js';
 
@@ -179,6 +179,86 @@ async function sendScheduledReplies() {
   }
 }
 
+// ─── Process pending backlog emails (classify + draft) ───
+// Runs each poll cycle, processes up to BATCH_SIZE pending emails per tenant
+const PENDING_BATCH_SIZE = 10; // emails per tenant per poll cycle — prevents API overload
+
+async function processPendingBacklog() {
+  const activeTenants = tenantStmts.getActive.all();
+  
+  for (const tenant of activeTenants) {
+    const ts = getTenantStmts(tenant.id);
+    const pending = ts.getPendingEmails.all(tenant.id);
+    
+    if (pending.length === 0) continue;
+    
+    const batch = pending.slice(0, PENDING_BATCH_SIZE);
+    console.log(`[BACKLOG] T${tenant.id} Processing ${batch.length} of ${pending.length} pending emails...`);
+    
+    let processed = 0;
+    let realReplies = 0;
+    
+    for (const email of batch) {
+      try {
+        const result = await classifyEmail(email, tenant.id);
+        console.log(`[BACKLOG] T${tenant.id} ${email.from_email}: ${result.classification} (${(result.confidence * 100).toFixed(0)}%)`);
+        
+        if (result.classification === 'real_reply') {
+          const account = ts.getAccount.get(email.account_id, tenant.id);
+          if (account) {
+            // Conversation guard check
+            const guardResult = checkConversationGuard(email, account, tenant.id);
+            if (guardResult.blocked) {
+              console.log(`[BACKLOG] T${tenant.id} Guard blocked ${email.from_email}: ${guardResult.reason}`);
+              globalStmts.markEmailSkipped.run(`Conversation guard: ${guardResult.reason}`, email.id);
+              globalStmts.incrementSkipped.run(account.id);
+              logActivity(tenant.id, account.id, 'skipped', `Guard blocked ${email.from_email} — ${guardResult.reason}`);
+              processed++;
+              continue;
+            }
+            
+            console.log(`[BACKLOG] T${tenant.id} Generating reply for ${email.from_email}...`);
+            const replyText = await generateReply(email, account, tenant.id);
+            
+            if (account.mode === 'auto') {
+              const delaySec = account.min_delay_sec + Math.floor(Math.random() * (account.max_delay_sec - account.min_delay_sec));
+              globalStmts.updateEmailReply.run({
+                reply_status: 'scheduled',
+                reply_text: replyText,
+                reply_scheduled_for: new Date(Date.now() + delaySec * 1000).toISOString(),
+                id: email.id,
+              });
+            } else {
+              globalStmts.updateEmailReply.run({
+                reply_status: 'draft',
+                reply_text: replyText,
+                reply_scheduled_for: null,
+                id: email.id,
+              });
+            }
+            logActivity(tenant.id, account.id, 'draft', `Backlog: Reply drafted for ${email.from_email}`, replyText.substring(0, 200));
+            realReplies++;
+          }
+        } else {
+          globalStmts.markEmailSkipped.run(`Classified as ${result.classification}: ${result.reason}`, email.id);
+          const account = ts.getAccount.get(email.account_id, tenant.id);
+          if (account) globalStmts.incrementSkipped.run(account.id);
+        }
+        
+        processed++;
+      } catch (error) {
+        console.error(`[BACKLOG] T${tenant.id} Error processing ${email.from_email}:`, error.message);
+        logActivity(tenant.id, email.account_id, 'error', `Backlog error for ${email.from_email}: ${error.message}`);
+      }
+    }
+    
+    if (processed > 0) {
+      console.log(`[BACKLOG] T${tenant.id} Batch done: ${processed} processed, ${realReplies} real replies, ${pending.length - processed} still pending`);
+      logActivity(tenant.id, null, 'batch_process', `Backlog: ${processed} processed, ${realReplies} drafts, ${pending.length - processed} remaining`);
+    }
+  }
+}
+
 // ─── Main poll cycle (multi-tenant) ───
 async function pollCycle() {
   if (isRunning) {
@@ -196,7 +276,7 @@ async function pollCycle() {
       return;
     }
 
-    // Process each account (grouped by tenant for logging clarity)
+    // Step 1: Fetch & process NEW emails from IMAP for each account
     for (const account of accounts) {
       try {
         await processAccount(account, account.tenant_id);
@@ -205,7 +285,10 @@ async function pollCycle() {
       }
     }
 
-    // Send any scheduled replies that are due
+    // Step 2: Process pending backlog (old unclassified emails) — batch of 10 per tenant
+    await processPendingBacklog();
+
+    // Step 3: Send any scheduled replies that are due
     await sendScheduledReplies();
 
   } catch (error) {
