@@ -3,6 +3,7 @@
 // Supports: Google Gemini (native), OpenAI-compatible APIs
 // v1.2: Added reply quality validation, retry logic, model fallback
 // v1.3: Training message style learning, 5-URL campaign rotation
+// v1.7: Positive-signal detection — defaults to real_reply when no auto-reply signals found
 // ═══════════════════════════════════════════════════════════════
 
 import { stmts, logActivity } from './database.js';
@@ -266,7 +267,107 @@ function preClassifyByHeaders(email) {
     }
   }
 
-  return null; // No rule matched — needs AI classification
+  return null; // No auto-reply/spam/newsletter signal — needs AI or positive-signal check
+}
+
+// ─── Positive-signal check: does this look like a real human reply? ───
+// Called when no NEGATIVE signals found and AI is unavailable.
+// The logic: if it survived all the auto-reply/spam/newsletter/bounce checks above,
+// AND it shows positive human-reply signals, treat it as real.
+function looksLikeRealReply(email) {
+  const from = (email.from_email || '').toLowerCase();
+  const subject = (email.subject || '').toLowerCase();
+  const bodyText = (email.body_text || '');
+  const bodyLower = bodyText.toLowerCase().substring(0, 3000);
+  const bodyLen = bodyText.length;
+
+  let score = 0;
+  const signals = [];
+
+  // ── Subject signals ──
+  // RE: or FW: prefix = someone is replying to or forwarding a conversation
+  if (/^(re|fw|fwd)\s*:/i.test(email.subject || '')) {
+    score += 30;
+    signals.push('RE:/FW: subject prefix');
+  }
+
+  // ── Sender signals ──
+  // Personal name-based email (firstname.lastname@ or firstnamelastname@)
+  if (/^[a-z]+[\._-]?[a-z]+@/i.test(from) && !from.includes('info@') && !from.includes('support@') && !from.includes('sales@') && !from.includes('admin@') && !from.includes('contact@') && !from.includes('hello@') && !from.includes('help@') && !from.includes('team@')) {
+    score += 15;
+    signals.push('personal email address');
+  }
+  // Has a real human name (not just a company/dept name)
+  const fromName = (email.from_name || '').trim();
+  if (fromName && /^[A-Z][a-z]+ [A-Z][a-z]/.test(fromName)) {
+    score += 10;
+    signals.push('real person name');
+  }
+
+  // ── Body signals (positive — human writing patterns) ──
+  // Greeting patterns
+  if (/^(hi|hey|hello|dear|good\s+(morning|afternoon|evening))/im.test(bodyLower)) {
+    score += 15;
+    signals.push('greeting');
+  }
+  // Questions (real humans ask questions)
+  const questionMarks = (bodyText.match(/\?/g) || []).length;
+  if (questionMarks >= 1) {
+    score += 10;
+    signals.push(`${questionMarks} question(s)`);
+  }
+  // Conversational phrases real humans use
+  const humanPhrases = [
+    'can you tell me', 'could you', 'would you', 'let me know',
+    'i would like', "i'd like", 'interested in', 'more information',
+    'please send', 'looking forward', 'thanks for reaching out',
+    'thank you for', 'nice to meet', 'sounds great', 'sounds good',
+    'get back to', 'follow up', 'wanted to', 'reaching out',
+    'happy to help', 'happy to assist', 'more than happy',
+    'a bit more', 'more details', 'more about', 'tell me more',
+    'what are you looking', 'what do you need', 'how can we help',
+    'schedule a call', 'set up a time', 'available for',
+  ];
+  let phraseHits = 0;
+  for (const phrase of humanPhrases) {
+    if (bodyLower.includes(phrase)) phraseHits++;
+  }
+  if (phraseHits >= 1) {
+    score += 15;
+    signals.push(`${phraseHits} human phrase(s)`);
+  }
+  if (phraseHits >= 3) {
+    score += 10; // bonus for multiple human phrases
+    signals.push('multiple human phrases (bonus)');
+  }
+
+  // Sign-off patterns
+  if (/(regards|best|sincerely|thanks|thank you|cheers|br,|warm regards|kind regards)/im.test(bodyLower)) {
+    score += 10;
+    signals.push('sign-off');
+  }
+
+  // ── Body signals (negative — machine-generated content) ──
+  // If body is mostly HTML (no real text extracted), likely automated
+  if (bodyLen < 20 || (bodyLen > 0 && bodyLower.startsWith('<!doctype') || bodyLower.startsWith('<html'))) {
+    score -= 40;
+    signals.push('body is raw HTML (negative)');
+  }
+  // Lots of URLs/tracking links = marketing/automated
+  const urlCount = (bodyText.match(/https?:\/\//g) || []).length;
+  if (urlCount > 5) {
+    score -= 15;
+    signals.push(`${urlCount} URLs (negative)`);
+  }
+
+  // ── Threshold: 40+ = real reply, otherwise uncertain ──
+  const isReal = score >= 40;
+  return {
+    isReal,
+    score,
+    signals,
+    confidence: isReal ? Math.min(0.85, 0.6 + score / 200) : 0.3,
+  };
 }
 
 // ─── AI Classification ───
@@ -355,8 +456,32 @@ export async function classifyEmail(email) {
     return ruleResult;
   }
 
-  // Step 4: Default — mark as other
-  const defaultResult = { classification: 'other', confidence: 0.3, reason: 'No classification signal — needs manual review' };
+  // Step 4: Positive-signal check — if no auto-reply/spam signals were found,
+  // check if it LOOKS like a real human reply. The absence of negative signals
+  // combined with positive human-writing signals = real reply.
+  const positiveCheck = looksLikeRealReply(email);
+  if (positiveCheck.isReal) {
+    const result = {
+      classification: 'real_reply',
+      confidence: positiveCheck.confidence,
+      reason: `Positive signals (score ${positiveCheck.score}): ${positiveCheck.signals.join(', ')}`,
+    };
+    stmts.updateEmailClassification.run({
+      id: email.id,
+      classification: result.classification,
+      confidence: result.confidence,
+      classification_reason: `[RULE-POSITIVE] ${result.reason}`,
+    });
+    console.log(`[CLASSIFY] Positive-signal detection: real_reply (score ${positiveCheck.score}) — ${positiveCheck.signals.join(', ')}`);
+    return result;
+  }
+
+  // Step 5: Default — genuinely uncertain, mark as other for manual review
+  const defaultResult = {
+    classification: 'other',
+    confidence: 0.3,
+    reason: `No clear signal (positive score ${positiveCheck.score}: ${positiveCheck.signals.join(', ') || 'none'}) — needs manual review`,
+  };
   stmts.updateEmailClassification.run({
     id: email.id,
     classification: defaultResult.classification,
@@ -399,16 +524,29 @@ function getTrainingExamples() {
 
 // ─── Generate Reply (with quality validation + retry + fallback) ───
 export async function generateReply(email, account) {
-  // Extract first name from sender
+  // Extract first name from sender (handles "LastName, FirstName (Title)" format)
   let firstName = '';
   if (email.from_name) {
-    firstName = email.from_name.split(/\s+/)[0];
-  } else {
+    const name = email.from_name.trim();
+    if (name.includes(',')) {
+      // "McGinnis, Liddy (Tax, Audit...)" → extract part after first comma, before any parenthesis
+      const afterComma = name.split(',')[1]?.trim() || '';
+      firstName = afterComma.split(/[\s(]/)[0]; // "Liddy" from "Liddy (Tax, Audit...)"
+    }
+    if (!firstName) {
+      firstName = name.split(/\s+/)[0]; // Normal "FirstName LastName" format
+    }
+    // Clean up any trailing punctuation
+    firstName = firstName.replace(/[,.:;]+$/, '');
+  }
+  if (!firstName) {
     firstName = email.from_email.split('@')[0].replace(/[._-]/g, ' ').split(' ')[0];
     firstName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
   }
 
-  const personaName = account.persona_name || account.display_name || account.email.split('@')[0];
+  // Use display_name (real mailbox owner) for sign-off, NOT persona_name
+  // This matches the From header in sendReply() which also uses display_name
+  const personaName = account.display_name || account.persona_name || account.email.split('@')[0];
   const personaTitle = account.persona_title || '';
   const campaignLink = getRandomCampaignUrl(account.campaign_link);
   const trainingExamples = getTrainingExamples();
