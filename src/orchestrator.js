@@ -2,14 +2,18 @@
 // AUTOREPLY ENGINE — Orchestrator (Poll → Classify → Reply)
 // v1.6: Organic threaded replies — looks identical to real email client
 // v2.0: Multi-tenant — polls all active tenants, scoped guard/settings
+// v2.1: Split-loop architecture — IMAP fetch never blocked by backlog
 // ═══════════════════════════════════════════════════════════════
 
 import { globalStmts, logActivity, getTenantGuardSettings, getTenantStmts, tenantStmts } from './database.js';
 import { fetchNewEmails, sendReply } from './email-engine.js';
 import { classifyEmail, generateReply } from './ai-classifier.js';
 
-let isRunning = false;
+// Split-loop mutexes: IMAP fetch and backlog run independently
+let isFetching = false;      // Guards IMAP fetch loop (fast — seconds)
+let isBacklogging = false;   // Guards backlog processing loop (slow — minutes)
 let pollTimer = null;
+let backlogTimer = null;
 
 // ─── Conversation Guard: Smart duplicate/loop prevention (tenant-aware) ───
 function checkConversationGuard(email, account, tenantId) {
@@ -267,65 +271,89 @@ async function processPendingBacklog() {
   }
 }
 
-// ─── Main poll cycle (multi-tenant) ───
-async function pollCycle() {
-  if (isRunning) {
-    console.log('[POLL] Previous cycle still running — skipping');
+// ─── IMAP Fetch cycle — runs every interval, NEVER blocked by backlog ───
+async function fetchCycle() {
+  if (isFetching) {
+    console.log('[FETCH] Previous fetch still running — skipping');
     return;
   }
 
-  isRunning = true;
+  isFetching = true;
   try {
-    // Get ALL active accounts across ALL active tenants
     const accounts = globalStmts.getAllActiveAccounts.all();
     if (accounts.length === 0) {
-      console.log('[POLL] No active accounts across all tenants');
-      isRunning = false;
+      console.log('[FETCH] No active accounts across all tenants');
       return;
     }
 
-    // Step 1: Fetch & process NEW emails from IMAP for each account
+    // Step 1: Fetch NEW emails from IMAP for each account (fast — just IMAP download)
     for (const account of accounts) {
       try {
         await processAccount(account, account.tenant_id);
       } catch (error) {
-        console.error(`[POLL] T${account.tenant_id} Account ${account.email} failed:`, error.message);
+        console.error(`[FETCH] T${account.tenant_id} Account ${account.email} failed:`, error.message);
       }
     }
 
-    // Step 2: Process pending backlog (old unclassified emails) — batch of 10 per tenant
-    await processPendingBacklog();
-
-    // Step 3: Send any scheduled replies that are due
+    // Step 2: Send any scheduled replies that are due (also fast)
     await sendScheduledReplies();
 
   } catch (error) {
-    console.error('[POLL] Cycle error:', error.message);
+    console.error('[FETCH] Cycle error:', error.message);
   } finally {
-    isRunning = false;
+    isFetching = false;
   }
 }
 
-// ─── Start/stop the polling engine ───
-export function startPolling(intervalSec = 120) {
-  if (pollTimer) {
-    clearInterval(pollTimer);
+// ─── Backlog cycle — runs independently, can take minutes ───
+async function backlogCycle() {
+  if (isBacklogging) {
+    console.log('[BACKLOG] Previous backlog batch still running — skipping');
+    return;
   }
 
-  console.log(`[ENGINE] Starting poll engine — interval: ${intervalSec}s`);
-  logActivity(1, null, 'system', `Poll engine started — interval: ${intervalSec}s`);
+  isBacklogging = true;
+  try {
+    await processPendingBacklog();
+  } catch (error) {
+    console.error('[BACKLOG] Cycle error:', error.message);
+  } finally {
+    isBacklogging = false;
+  }
+}
 
-  pollCycle();
-  pollTimer = setInterval(pollCycle, intervalSec * 1000);
+// ─── Start/stop the polling engine (split-loop) ───
+export function startPolling(intervalSec = 120) {
+  if (pollTimer) clearInterval(pollTimer);
+  if (backlogTimer) clearInterval(backlogTimer);
+
+  const backlogIntervalSec = 60; // Backlog checks every 60s (independent of fetch)
+
+  console.log(`[ENGINE] Starting split-loop engine — fetch: ${intervalSec}s, backlog: ${backlogIntervalSec}s`);
+  logActivity(1, null, 'system', `Poll engine started — fetch: ${intervalSec}s, backlog: ${backlogIntervalSec}s (split-loop)`);
+
+  // Start both loops immediately, then on their own intervals
+  fetchCycle();
+  pollTimer = setInterval(fetchCycle, intervalSec * 1000);
+
+  // Backlog starts after a short delay to not compete with first fetch
+  setTimeout(() => {
+    backlogCycle();
+    backlogTimer = setInterval(backlogCycle, backlogIntervalSec * 1000);
+  }, 5000);
 }
 
 export function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
-    console.log('[ENGINE] Poll engine stopped');
-    logActivity(1, null, 'system', 'Poll engine stopped');
   }
+  if (backlogTimer) {
+    clearInterval(backlogTimer);
+    backlogTimer = null;
+  }
+  console.log('[ENGINE] Poll engine stopped (both loops)');
+  logActivity(1, null, 'system', 'Poll engine stopped');
 }
 
 // ─── Manual trigger for a single account ───
@@ -341,6 +369,8 @@ export async function triggerAccountPoll(accountId) {
 export function getEngineStatus() {
   return {
     running: !!pollTimer,
-    processing: isRunning,
+    processing: isFetching || isBacklogging,
+    fetching: isFetching,
+    backlogging: isBacklogging,
   };
 }
