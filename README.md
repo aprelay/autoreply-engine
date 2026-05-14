@@ -1,4 +1,4 @@
-# AutoReply Engine v2.0 — Multi-Tenant AI Email Reply System
+# AutoReply Engine v2.1 — Multi-Tenant AI Email Reply System
 
 > Automated email reply system with AI classification, smart contextual replies, multi-tenant isolation, and a full SPA dashboard. Node.js/Express + better-sqlite3 + OpenRouter AI.
 
@@ -44,13 +44,19 @@
 - [x] **Engine Controls** — Start/stop polling engine, view status, force-poll individual accounts
 
 ### Performance & Reliability
+- [x] **Split-Loop Architecture (v2.1)** — IMAP fetch and backlog processing run on independent timers with separate mutexes. New emails are always picked up within 120s regardless of backlog size.
 - [x] **Fast Backlog Processing** — 50 emails/cycle with sub-batch throttling (10 per sub-batch, 500ms pause)
 - [x] **3-Layer Conversation Guard** — Max replies per sender + cooldown window + thread dedup
 - [x] **AI Retry Chain** — 5 fallback models with temperature adjustment on retry
 - [x] **Non-ASCII Guard** — Rejects garbled AI output and retries with next model
 - [x] **WAL Mode SQLite** — better-sqlite3 with write-ahead logging for concurrent reads
 
-### Recent Additions (v2.0.5 — Current)
+### Recent Additions (v2.1 — Current)
+- [x] **Split-loop engine** — IMAP fetch (120s) and backlog processing (60s) run independently. Fixes starvation bug where long backlog cycles blocked IMAP fetch for 10-15+ minutes.
+- [x] **Per-account campaign URLs** — Each account has its own 5 URL slots, independent from other accounts. Falls back to tenant-level URLs if account slots are empty.
+- [x] **Skipped emails limit increase** — API and dashboard both support up to 1000 skipped emails (was 200)
+
+### v2.0.5
 - [x] **Backlog speed-up** — PENDING_BATCH_SIZE increased from 25→50 with sub-batch throttling
 - [x] **Skipped Emails Review panel** — New nav item + panel showing AI-skipped emails with force-draft button
 - [x] **Force-Draft workflow** — Reclassifies skipped email as `real_reply`, generates AI reply, sets to `draft`
@@ -83,13 +89,21 @@ Railway Pro ($20/mo)
     └── Optional: own AI key (or inherits master's)
 ```
 
-### Poll Cycle Flow
+### Split-Loop Engine (v2.1)
 ```
-Every 120 seconds:
+Fetch Loop (every 120s) — fast, never blocked:
   Step 1 → IMAP fetch new emails (all active accounts, all tenants)
-  Step 2 → Backlog processing (50 pending emails per tenant per cycle)
+  Step 2 → Send scheduled replies (where scheduled_for <= now)
+  Mutex: isFetching (independent from backlog)
+
+Backlog Loop (every 60s) — slow, runs independently:
+  Step 1 → Process up to 50 pending emails per tenant
            └── Sub-batches of 10 with 500ms pauses (avoids API rate limits)
-  Step 3 → Send scheduled replies (where scheduled_for <= now)
+  Mutex: isBacklogging (independent from fetch)
+
+Both loops start on engine startup with a 5s stagger.
+If backlog is still running when the next 60s tick fires, it skips.
+IMAP fetch ALWAYS runs on schedule — never waits for backlog.
 ```
 
 ### Email Processing Pipeline
@@ -199,8 +213,8 @@ All API calls require `?pw=` parameter. Master password provides global access. 
 |--------|------|-------------|
 | GET | `/api/settings` | All settings with resolved AI config |
 | PUT | `/api/settings` | Update settings (AI, poll, password, URLs, notes) |
-| GET | `/api/campaign-urls` | Get 5 campaign URL slots |
-| PUT | `/api/campaign-urls` | Update campaign URLs. Body: `{"urls":["...","...",...]}` |
+| GET | `/api/campaign-urls` | Get 5 campaign URL slots. `?account_id=N` for per-account URLs |
+| PUT | `/api/campaign-urls` | Update campaign URLs. `?account_id=N`. Body: `{"urls":["...","...",...]}` |
 | GET | `/api/guard-settings` | Get conversation guard settings |
 | PUT | `/api/guard-settings` | Update guard. Body: `{"max_replies_per_sender":N,"sender_cooldown_hours":N}` |
 
@@ -220,7 +234,7 @@ All API calls require `?pw=` parameter. Master password provides global access. 
 ### Engine Controls (Master Only)
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/engine/status` | Engine running/processing status |
+| GET | `/api/engine/status` | Engine status (running, processing, fetching, backlogging) |
 | POST | `/api/engine/start` | Start polling engine |
 | POST | `/api/engine/stop` | Stop polling engine |
 | POST | `/api/engine/poll/:accountId` | Force-poll a specific account |
@@ -255,6 +269,7 @@ accounts (
   id, tenant_id, email, password, display_name,
   imap_host, imap_port, smtp_host, smtp_port,
   campaign_name, campaign_link,
+  campaign_url_1, campaign_url_2, campaign_url_3, campaign_url_4, campaign_url_5,  -- per-account URL slots
   persona_name, persona_title, reply_style,
   mode,              -- 'approval' | 'auto' | 'paused'
   min_delay_sec, max_delay_sec,
@@ -307,8 +322,11 @@ emails (
 - Template fallback when all 5 models fail
 
 ### Campaign URL Rotation
-- 5 URL slots per tenant, randomly selected per reply
-- `getRandomCampaignUrl()` picks from non-empty slots
+- **Per-account URLs** — Each account has its own 5 URL slots (`campaign_url_1..5` on accounts table)
+- **Tenant fallback** — If account has no URLs set, falls back to tenant-level URLs
+- `getRandomCampaignUrl(tenantId, accountFallback, accountId)` checks account first, then tenant
+- `getAccountCampaignUrls(accountId, tenantId)` helper for account-level URL retrieval
+- Dashboard Campaign URLs card shows which account's URLs are being edited
 - Bulk URL replacement via "Update URLs" button
 
 ---
@@ -383,10 +401,11 @@ webapp/
 - **Paused** — Account is skipped during polling
 
 ### Backlog Processing
-The system processes pending emails automatically every poll cycle (120s):
+The system processes pending emails on an **independent 60-second loop**:
 - **50 emails per tenant per cycle** with sub-batch throttling
 - **10 emails per sub-batch** with 500ms pause between batches
 - **~1,500 emails/hour** throughput on free AI tier
+- Runs independently of IMAP fetch — never blocks new email detection
 - Manual trigger available via "Process Pending" button or `POST /api/emails/process-pending`
 
 ---
@@ -418,6 +437,8 @@ Categories tested:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1.0 | 2026-05-14 | **Split-loop architecture** — IMAP fetch never blocked by backlog. Per-account campaign URLs. Skipped emails limit 200→1000. |
+| 2.0.6 | 2026-05-14 | Per-account campaign URLs, skipped emails limit increase |
 | 2.0.5 | 2026-05-14 | Backlog speed-up (50/cycle), Skipped Emails Review panel, Force-Draft, Update URLs button, Global Account Switcher, Auto Backlog Processing |
 | 2.0.0 | 2026-05-14 | Multi-tenant architecture, master/child isolation, tenant CRUD, AI inheritance |
 | 1.8 | 2026-05-14 | Smart contextual template replies, intelligent name extraction |
