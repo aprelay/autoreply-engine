@@ -114,9 +114,21 @@ db.exec(`
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
 insertSetting.run('admin_password', 'admin123');
 insertSetting.run('poll_interval_sec', '120');
-insertSetting.run('openai_api_key', '');
-insertSetting.run('openai_base_url', '');
-insertSetting.run('openai_model', 'gpt-5-mini');
+// AI provider settings (supports gemini, openai, deepseek, mistral, openrouter)
+insertSetting.run('ai_provider', 'gemini');
+insertSetting.run('ai_api_key', '');
+insertSetting.run('ai_model', 'gemini-2.0-flash');
+insertSetting.run('ai_base_url', '');
+// Migrate old settings if they exist
+const oldKey = db.prepare("SELECT value FROM settings WHERE key='openai_api_key'").get();
+if (oldKey?.value) {
+  insertSetting.run('ai_provider', 'openai');
+  insertSetting.run('ai_api_key', oldKey.value);
+  const oldModel = db.prepare("SELECT value FROM settings WHERE key='openai_model'").get();
+  if (oldModel?.value) insertSetting.run('ai_model', oldModel.value);
+  const oldUrl = db.prepare("SELECT value FROM settings WHERE key='openai_base_url'").get();
+  if (oldUrl?.value) insertSetting.run('ai_base_url', oldUrl.value);
+}
 
 // ─── Prepared Statements ───
 

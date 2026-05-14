@@ -256,7 +256,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
   const obj = {};
   for (const s of all) obj[s.key] = s.value;
   // Mask sensitive values
-  if (obj.openai_api_key) obj.openai_api_key = obj.openai_api_key.substring(0, 8) + '***';
+  if (obj.ai_api_key) obj.ai_api_key = obj.ai_api_key.substring(0, 8) + '***';
   res.json(obj);
 });
 
@@ -264,7 +264,7 @@ app.put('/api/settings', requireAuth, (req, res) => {
   const updates = req.body;
   for (const [key, value] of Object.entries(updates)) {
     // Don't overwrite API key if masked
-    if (key === 'openai_api_key' && value.endsWith('***')) continue;
+    if (key === 'ai_api_key' && value.endsWith('***')) continue;
     stmts.setSetting.run(key, String(value));
   }
   resetAIClient();

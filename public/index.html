@@ -218,20 +218,29 @@
           <div class="card">
             <h3><i class="fas fa-brain"></i> AI Configuration</h3>
             <div class="form-group">
-              <label>OpenAI API Key <span style="font-weight:normal;color:var(--text3)">(leave blank to use GenSpark proxy)</span></label>
-              <input class="form-input" id="setOpenaiKey" type="password" placeholder="sk-...">
+              <label>AI Provider</label>
+              <select class="form-select" id="setAiProvider" onchange="updateModelOptions()">
+                <option value="openrouter">OpenRouter (free models, no card needed)</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="openai">OpenAI / DeepSeek / Mistral</option>
+              </select>
             </div>
             <div class="form-group">
-              <label>OpenAI Base URL <span style="font-weight:normal;color:var(--text3)">(leave blank for default)</span></label>
-              <input class="form-input" id="setOpenaiUrl" placeholder="https://api.openai.com/v1">
+              <label>API Key *</label>
+              <input class="form-input" id="setAiKey" type="password" placeholder="AIza... (Gemini) or sk-... (OpenAI)">
+              <div style="font-size:10px;color:var(--text3);margin-top:4px" id="apiKeyHelp">Get free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a></div>
             </div>
             <div class="form-group">
               <label>Model</label>
-              <select class="form-select" id="setOpenaiModel">
-                <option value="gpt-5-mini">GPT-5 Mini (fast, cheap — recommended)</option>
-                <option value="gpt-5-nano">GPT-5 Nano (fastest, cheapest)</option>
-                <option value="gpt-5">GPT-5 (best quality)</option>
+              <select class="form-select" id="setAiModel">
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, free)</option>
+                <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (fastest, free)</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash (best quality, free)</option>
               </select>
+            </div>
+            <div class="form-group" id="baseUrlGroup" style="display:none">
+              <label>API Base URL <span style="font-weight:normal;color:var(--text3)">(OpenAI-compatible only)</span></label>
+              <input class="form-input" id="setAiBaseUrl" placeholder="https://api.openai.com/v1">
             </div>
           </div>
           <div class="card">
@@ -752,13 +761,52 @@
     }
 
     // ─── Settings ───
+    function updateModelOptions() {
+      const provider = document.getElementById('setAiProvider').value;
+      const modelSel = document.getElementById('setAiModel');
+      const baseUrlGroup = document.getElementById('baseUrlGroup');
+      const helpEl = document.getElementById('apiKeyHelp');
+
+      if (provider === 'openrouter') {
+        modelSel.innerHTML = `
+          <option value="deepseek/deepseek-v4-flash:free">DeepSeek V4 Flash (best, free)</option>
+          <option value="nvidia/nemotron-3-super-120b-a12b:free">Nemotron 3 Super 120B (free)</option>
+          <option value="google/gemma-4-31b-it:free">Gemma 4 31B (free)</option>
+          <option value="minimax/minimax-m2.5:free">MiniMax M2.5 (free)</option>
+          <option value="nvidia/nemotron-nano-9b-v2:free">Nemotron Nano 9B (fastest, free)</option>
+          <option value="openrouter/free">Auto-select free model</option>
+        `;
+        baseUrlGroup.style.display = 'none';
+        helpEl.innerHTML = 'Get free key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--accent)">openrouter.ai/settings/keys</a> — no credit card needed';
+      } else if (provider === 'gemini') {
+        modelSel.innerHTML = `
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, free)</option>
+          <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (fastest, free)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (best quality, free)</option>
+        `;
+        baseUrlGroup.style.display = 'none';
+        helpEl.innerHTML = 'Get free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a>';
+      } else {
+        modelSel.innerHTML = `
+          <option value="gpt-4o-mini">GPT-4o Mini</option>
+          <option value="gpt-4o">GPT-4o</option>
+          <option value="deepseek-chat">DeepSeek V3</option>
+          <option value="mistral-small-latest">Mistral Small</option>
+        `;
+        baseUrlGroup.style.display = 'block';
+        helpEl.innerHTML = 'For DeepSeek: <a href="https://platform.deepseek.com" target="_blank" style="color:var(--accent)">platform.deepseek.com</a> · For OpenAI: <a href="https://platform.openai.com" target="_blank" style="color:var(--accent)">platform.openai.com</a>';
+      }
+    }
+
     async function loadSettings() {
       try {
         const s = await fetch(API('/settings')).then(r => r.json());
         document.getElementById('setAdminPw').value = s.admin_password || '';
-        document.getElementById('setOpenaiKey').value = s.openai_api_key || '';
-        document.getElementById('setOpenaiUrl').value = s.openai_base_url || '';
-        document.getElementById('setOpenaiModel').value = s.openai_model || 'gpt-4o-mini';
+        document.getElementById('setAiProvider').value = s.ai_provider || 'gemini';
+        document.getElementById('setAiKey').value = s.ai_api_key || '';
+        updateModelOptions();
+        document.getElementById('setAiModel').value = s.ai_model || 'gemini-2.0-flash';
+        document.getElementById('setAiBaseUrl').value = s.ai_base_url || '';
         document.getElementById('setPollInterval').value = s.poll_interval_sec || '120';
       } catch(e) {}
     }
@@ -766,9 +814,10 @@
     async function saveSettings() {
       const data = {
         admin_password: document.getElementById('setAdminPw').value,
-        openai_api_key: document.getElementById('setOpenaiKey').value,
-        openai_base_url: document.getElementById('setOpenaiUrl').value,
-        openai_model: document.getElementById('setOpenaiModel').value,
+        ai_provider: document.getElementById('setAiProvider').value,
+        ai_api_key: document.getElementById('setAiKey').value,
+        ai_model: document.getElementById('setAiModel').value,
+        ai_base_url: document.getElementById('setAiBaseUrl').value,
         poll_interval_sec: document.getElementById('setPollInterval').value,
       };
       try {

@@ -1,63 +1,111 @@
 // ═══════════════════════════════════════════════════════════════
 // AUTOREPLY ENGINE — AI Email Classifier + Reply Generator
-// Uses OpenAI-compatible API for smart email analysis
+// Supports: Google Gemini (native), OpenAI-compatible APIs
 // ═══════════════════════════════════════════════════════════════
 
-import OpenAI from 'openai';
-import fs from 'fs';
-import yaml from 'js-yaml';
-import os from 'os';
-import path from 'path';
 import { stmts, logActivity } from './database.js';
 
-let openaiClient = null;
-let currentModel = 'gpt-4o-mini';
+let cachedProvider = null; // { type: 'gemini'|'openai', apiKey, model, baseUrl }
 
-// ─── Initialize OpenAI client ───
-function getClient() {
-  if (openaiClient) return openaiClient;
+// ─── Get AI provider config from DB settings ───
+function getProvider() {
+  if (cachedProvider) return cachedProvider;
 
-  // Try GenSpark proxy config first
-  const configPath = path.join(os.homedir(), '.genspark_llm.yaml');
-  let apiKey = process.env.OPENAI_API_KEY || '';
-  let baseURL = process.env.OPENAI_BASE_URL || '';
-
-  if (fs.existsSync(configPath)) {
-    try {
-      const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
-      if (config?.openai?.api_key) {
-        // Resolve env var references like ${GENSPARK_TOKEN}
-        apiKey = config.openai.api_key.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] || '');
-      }
-      if (config?.openai?.base_url) baseURL = config.openai.base_url;
-    } catch (e) {
-      console.error('[AI] Failed to load config:', e.message);
-    }
-  }
-
-  // Check DB settings for custom API key
-  const dbKey = stmts.getSetting.get('openai_api_key');
-  const dbUrl = stmts.getSetting.get('openai_base_url');
-  const dbModel = stmts.getSetting.get('openai_model');
-  if (dbKey?.value) apiKey = dbKey.value;
-  if (dbUrl?.value) baseURL = dbUrl.value;
-  if (dbModel?.value) currentModel = dbModel.value;
+  const provider = stmts.getSetting.get('ai_provider')?.value || 'gemini';
+  const apiKey = stmts.getSetting.get('ai_api_key')?.value || '';
+  const model = stmts.getSetting.get('ai_model')?.value || 'gemini-2.0-flash';
 
   if (!apiKey) {
-    console.warn('[AI] No OpenAI API key configured — classification will use rule-based fallback');
+    console.warn('[AI] No API key configured — classification will use rule-based fallback');
     return null;
   }
 
-  openaiClient = new OpenAI({
-    apiKey,
-    baseURL: baseURL || undefined,
-  });
-  return openaiClient;
+  cachedProvider = { type: provider, apiKey, model };
+  console.log(`[AI] Provider: ${provider} | Model: ${model}`);
+  return cachedProvider;
 }
 
-// Reset client (call after settings change)
+// Reset cached provider (call after settings change)
 export function resetAIClient() {
-  openaiClient = null;
+  cachedProvider = null;
+}
+
+// ─── Gemini native API call ───
+async function callGemini(apiKey, model, prompt, temperature = 0.1, maxTokens = 256) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+    },
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-goog-api-key': apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API ${res.status}: ${err.substring(0, 300)}`);
+  }
+
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+}
+
+// ─── OpenAI-compatible API call (fallback for OpenAI/DeepSeek/Mistral/etc) ───
+async function callOpenAI(apiKey, model, prompt, temperature = 0.1, maxTokens = 256, overrideBaseUrl = null) {
+  const baseUrl = overrideBaseUrl || stmts.getSetting.get('ai_base_url')?.value || 'https://api.openai.com/v1';
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_tokens: maxTokens,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`OpenAI API ${res.status}: ${err.substring(0, 300)}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim() || '';
+}
+
+// ─── Unified AI call — routes to correct provider ───
+async function callAI(prompt, temperature = 0.1, maxTokens = 256) {
+  const provider = getProvider();
+  if (!provider) return null;
+
+  try {
+    if (provider.type === 'gemini') {
+      return await callGemini(provider.apiKey, provider.model, prompt, temperature, maxTokens);
+    } else if (provider.type === 'openrouter') {
+      // OpenRouter uses OpenAI format with their base URL
+      return await callOpenAI(provider.apiKey, provider.model, prompt, temperature, maxTokens, 'https://openrouter.ai/api/v1');
+    } else {
+      return await callOpenAI(provider.apiKey, provider.model, prompt, temperature, maxTokens);
+    }
+  } catch (error) {
+    console.error(`[AI] ${provider.type} call failed:`, error.message);
+    logActivity(null, 'error', `AI call failed (${provider.type}): ${error.message}`);
+    return null;
+  }
 }
 
 // ─── Rule-based pre-classification (header analysis) ───
@@ -149,9 +197,6 @@ function preClassifyByHeaders(email) {
 
 // ─── AI Classification ───
 async function aiClassify(email) {
-  const client = getClient();
-  if (!client) return null;
-
   const prompt = `You are an email classification system. Analyze this incoming email and determine if it's a REAL human reply that needs a response, or an automated/system message that should be ignored.
 
 FROM: ${email.from_name} <${email.from_email}>
@@ -174,15 +219,10 @@ IMPORTANT: Only "real_reply" will trigger an automatic response. Be ACCURATE —
 Respond in EXACTLY this JSON format, nothing else:
 {"classification":"real_reply","confidence":0.92,"reason":"Person is asking about specific use case and requesting a call"}`;
 
-  try {
-    const response = await client.chat.completions.create({
-      model: currentModel,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 200,
-    });
+  const content = await callAI(prompt, 0.1, 200);
+  if (!content) return null;
 
-    const content = response.choices?.[0]?.message?.content?.trim() || '';
+  try {
     // Extract JSON from response (handle markdown code blocks)
     const jsonMatch = content.match(/\{[\s\S]*?\}/);
     if (jsonMatch) {
@@ -193,9 +233,8 @@ Respond in EXACTLY this JSON format, nothing else:
         reason: result.reason || 'AI classification',
       };
     }
-  } catch (error) {
-    console.error('[AI] Classification error:', error.message);
-    logActivity(null, 'error', `AI classification failed: ${error.message}`);
+  } catch (e) {
+    console.error('[AI] Failed to parse classification response:', content.substring(0, 200));
   }
 
   return null;
@@ -255,8 +294,6 @@ export async function classifyEmail(email) {
 
 // ─── Generate Reply ───
 export async function generateReply(email, account) {
-  const client = getClient();
-
   // Extract first name from sender
   let firstName = '';
   if (email.from_name) {
@@ -269,11 +306,6 @@ export async function generateReply(email, account) {
   const personaName = account.persona_name || account.display_name || account.email.split('@')[0];
   const personaTitle = account.persona_title || '';
   const campaignLink = account.campaign_link || 'https://example.com';
-
-  if (!client) {
-    // Fallback template when no AI available
-    return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email);
-  }
 
   const prompt = `You are writing a reply to a business email. Write a professional, warm, human-sounding reply.
 
@@ -303,21 +335,9 @@ RULES:
 
 Write ONLY the reply text, nothing else:`;
 
-  try {
-    const response = await client.chat.completions.create({
-      model: currentModel,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 500,
-    });
-
-    const reply = response.choices?.[0]?.message?.content?.trim() || '';
-    if (reply && reply.length > 20) {
-      return reply;
-    }
-  } catch (error) {
-    console.error('[AI] Reply generation error:', error.message);
-    logActivity(account.id, 'error', `AI reply generation failed: ${error.message}`);
+  const reply = await callAI(prompt, 0.7, 500);
+  if (reply && reply.length > 20) {
+    return reply;
   }
 
   // Fallback to template
