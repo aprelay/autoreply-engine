@@ -193,9 +193,12 @@ export async function sendReply(account, email, replyText) {
   }
 
   // Build reply headers for proper threading
+  // IMPORTANT: From name must match the actual email account owner (display_name),
+  // NOT the persona name. Mismatched name + email triggers spam filters in Outlook 365.
+  // Persona name is only used inside the reply body/signature, not the From header.
   const mailOptions = {
     from: {
-      name: account.persona_name || account.display_name || account.email.split('@')[0],
+      name: account.display_name || account.email.split('@')[0],
       address: account.email,
     },
     to: email.from_email,
