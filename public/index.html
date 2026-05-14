@@ -7,16 +7,17 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
   <style>
-    :root { --bg:#0a0e1a; --bg2:#111827; --bg3:#1e293b; --card:#151d2e; --border:#1e293b; --border2:#334155; --text:#e2e8f0; --text2:#94a3b8; --text3:#64748b; --accent:#6366f1; --accent2:#818cf8; --green:#10b981; --red:#ef4444; --yellow:#f59e0b; --blue:#3b82f6; }
+    :root { --bg:#0a0e1a; --bg2:#111827; --bg3:#1e293b; --card:#151d2e; --border:#1e293b; --border2:#334155; --text:#e2e8f0; --text2:#94a3b8; --text3:#64748b; --accent:#6366f1; --accent2:#818cf8; --green:#10b981; --red:#ef4444; --yellow:#f59e0b; --blue:#3b82f6; --orange:#f97316; --teal:#14b8a6; }
     *{margin:0;padding:0;box-sizing:border-box}
     body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
     ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg2)}::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
 
     .app{display:flex;height:100vh}
-    .sidebar{width:240px;min-width:240px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+    .sidebar{width:250px;min-width:250px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
     .sidebar-header{padding:20px;border-bottom:1px solid var(--border)}
     .sidebar-header h1{font-size:16px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:8px}
     .sidebar-header .version{font-size:11px;color:var(--text3);margin-top:2px}
+    .sidebar-header .tenant-info{font-size:11px;color:var(--teal);margin-top:4px;display:flex;align-items:center;gap:4px}
     .nav-section{padding:10px 0;border-bottom:1px solid var(--border)}
     .nav-label{padding:4px 20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text3)}
     .nav-item{display:flex;align-items:center;gap:10px;padding:9px 20px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500;border-left:3px solid transparent;transition:all .15s}
@@ -45,6 +46,7 @@
     .btn-success{background:var(--green);color:#fff}.btn-success:hover:not(:disabled){opacity:.85}
     .btn-danger{background:var(--red);color:#fff}.btn-danger:hover:not(:disabled){opacity:.85}
     .btn-secondary{background:var(--bg3);color:var(--text)}.btn-secondary:hover:not(:disabled){background:var(--border2)}
+    .btn-warning{background:var(--orange);color:#fff}.btn-warning:hover:not(:disabled){opacity:.85}
     .btn-sm{padding:5px 10px;font-size:11px}
     .btn-xs{padding:3px 7px;font-size:10px;border-radius:6px}
     .btn-ghost{background:transparent;color:var(--text2);padding:5px 8px}.btn-ghost:hover{background:var(--bg3);color:var(--text)}
@@ -66,6 +68,8 @@
     .badge-blue{background:rgba(59,130,246,.15);color:var(--blue)}
     .badge-purple{background:rgba(99,102,241,.15);color:var(--accent)}
     .badge-gray{background:rgba(100,116,139,.15);color:var(--text3)}
+    .badge-orange{background:rgba(249,115,22,.15);color:var(--orange)}
+    .badge-teal{background:rgba(20,184,166,.15);color:var(--teal)}
 
     .table{width:100%;border-collapse:collapse}
     .table th,.table td{padding:10px 12px;text-align:left;font-size:12px;border-bottom:1px solid var(--border)}
@@ -106,6 +110,19 @@
 
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
     .sidebar-footer{margin-top:auto;padding:14px 20px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
+
+    .tenant-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:12px;transition:border-color .2s}
+    .tenant-card:hover{border-color:var(--accent)}
+    .tenant-card.master{border-left:3px solid var(--orange)}
+    .tenant-card.child{border-left:3px solid var(--teal)}
+
+    .copy-btn{cursor:pointer;color:var(--text3);transition:color .15s}.copy-btn:hover{color:var(--accent)}
+
+    /* Tenant switcher in sidebar */
+    .tenant-switcher{padding:10px 16px;border-bottom:1px solid var(--border)}
+    .tenant-switcher select{width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;cursor:pointer}
+    .tenant-switcher select:focus{outline:none;border-color:var(--accent)}
+    .tenant-switcher label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:4px;display:block}
   </style>
 </head>
 <body>
@@ -114,8 +131,20 @@
     <div class="sidebar">
       <div class="sidebar-header">
         <h1><i class="fas fa-robot"></i> AutoReply</h1>
-        <div class="version">v1.5 Enterprise</div>
+        <div class="version">v2.0 Multi-Tenant</div>
+        <div class="tenant-info" id="tenantInfo">
+          <i class="fas fa-building"></i> <span id="tenantLabel">Loading...</span>
+        </div>
       </div>
+
+      <!-- Tenant Switcher (master only) -->
+      <div class="tenant-switcher" id="tenantSwitcher" style="display:none">
+        <label><i class="fas fa-exchange-alt"></i> Active Tenant</label>
+        <select id="tenantSelect" onchange="switchTenant()">
+          <option value="">Master (All Tenants)</option>
+        </select>
+      </div>
+
       <div class="nav-section">
         <div class="nav-label">Dashboard</div>
         <div class="nav-item active" data-panel="overview" onclick="switchPanel('overview')">
@@ -143,6 +172,12 @@
           <span class="icon"><i class="fas fa-graduation-cap"></i></span> Training Messages
         </div>
       </div>
+      <div class="nav-section" id="navMasterSection" style="display:none">
+        <div class="nav-label">Master</div>
+        <div class="nav-item" data-panel="tenants" onclick="switchPanel('tenants')">
+          <span class="icon"><i class="fas fa-sitemap"></i></span> Tenant Management
+        </div>
+      </div>
       <div class="nav-section">
         <div class="nav-label">System</div>
         <div class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
@@ -162,7 +197,9 @@
       <div class="topbar">
         <div class="topbar-title" id="topbarTitle">Overview</div>
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-success btn-sm" id="btnStartEngine" onclick="toggleEngine()"><i class="fas fa-play"></i> Start Engine</button>
+          <span id="masterEngineControls" style="display:none">
+            <button class="btn btn-success btn-sm" id="btnStartEngine" onclick="toggleEngine()"><i class="fas fa-play"></i> Start Engine</button>
+          </span>
         </div>
       </div>
 
@@ -229,17 +266,35 @@
           <div id="trainingList"></div>
         </div>
 
+        <!-- TENANT MANAGEMENT (master only) -->
+        <div class="panel" id="panel-tenants">
+          <div class="toolbar">
+            <button class="btn btn-primary btn-sm" onclick="showAddTenantModal()"><i class="fas fa-plus"></i> Create Child Tenant</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadTenants()"><i class="fas fa-sync"></i> Refresh</button>
+          </div>
+          <div class="card" style="background:rgba(249,115,22,.05);border-color:rgba(249,115,22,.2);margin-bottom:18px">
+            <div style="font-size:12px;color:var(--text2);line-height:1.7">
+              <i class="fas fa-crown" style="color:var(--orange);margin-right:4px"></i>
+              <strong>Multi-Tenant Architecture:</strong> Each child tenant gets its own email accounts, training messages, campaign URLs, and optional AI configuration. If a child has no AI key set, it inherits the master's. Share the child's unique dashboard URL so they can manage their own system independently.
+            </div>
+          </div>
+          <div id="tenantsList"></div>
+        </div>
+
         <!-- SETTINGS -->
         <div class="panel" id="panel-settings">
           <div class="card">
             <h3><i class="fas fa-key"></i> Authentication</h3>
             <div class="form-group">
-              <label>Admin Password</label>
+              <label>Dashboard Password</label>
               <input class="form-input" id="setAdminPw" type="password" placeholder="Dashboard password">
             </div>
           </div>
           <div class="card">
             <h3><i class="fas fa-brain"></i> AI Configuration</h3>
+            <div id="aiInheritBanner" style="display:none;font-size:11px;color:var(--teal);margin-bottom:12px;padding:8px 12px;background:rgba(20,184,166,.05);border:1px solid rgba(20,184,166,.2);border-radius:8px">
+              <i class="fas fa-arrow-up"></i> This tenant inherits AI config from the master. Set values below to override.
+            </div>
             <div class="form-group">
               <label>AI Provider</label>
               <select class="form-select" id="setAiProvider" onchange="updateModelOptions()">
@@ -250,15 +305,13 @@
             </div>
             <div class="form-group">
               <label>API Key *</label>
-              <input class="form-input" id="setAiKey" type="password" placeholder="AIza... (Gemini) or sk-... (OpenAI)">
-              <div style="font-size:10px;color:var(--text3);margin-top:4px" id="apiKeyHelp">Get free key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a></div>
+              <input class="form-input" id="setAiKey" type="password" placeholder="sk-or-... (OpenRouter) or AIza... (Gemini)">
+              <div style="font-size:10px;color:var(--text3);margin-top:4px" id="apiKeyHelp">Get free key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--accent)">openrouter.ai/settings/keys</a></div>
             </div>
             <div class="form-group">
               <label>Model</label>
               <select class="form-select" id="setAiModel">
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, free)</option>
-                <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (fastest, free)</option>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (best quality, free)</option>
+                <option value="deepseek/deepseek-v4-flash:free">DeepSeek V4 Flash (best, free)</option>
               </select>
             </div>
             <div class="form-group" id="baseUrlGroup" style="display:none">
@@ -318,7 +371,7 @@
               <input class="form-input" id="setCampaignUrl5" placeholder="https://yourdomain.com/link5">
             </div>
           </div>
-          <button class="btn btn-primary" onclick="saveSettings()"><i class="fas fa-save"></i> Save Settings</button>
+          <button class="btn btn-primary" onclick="saveSettings()"><i class="fas fa-save"></i> Save All Settings</button>
         </div>
       </div>
     </div>
@@ -328,7 +381,7 @@
   <div class="modal-overlay" id="addAccountModal">
     <div class="modal" style="max-width:600px">
       <div class="modal-header">
-        <h3><i class="fas fa-plus-circle"></i> Add Email Account</h3>
+        <h3 id="accountModalTitle"><i class="fas fa-plus-circle"></i> Add Email Account</h3>
         <button class="btn-ghost" onclick="closeModal('addAccountModal')"><i class="fas fa-times"></i></button>
       </div>
       <div class="modal-body">
@@ -425,12 +478,12 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label>Label <span style="font-weight:normal;color:var(--text3)">(optional — e.g. "Friendly follow-up", "Cold intro")</span></label>
+          <label>Label <span style="font-weight:normal;color:var(--text3)">(optional)</span></label>
           <input class="form-input" id="trainLabel" placeholder="Give this example a label for reference">
         </div>
         <div class="form-group">
           <label>Example Reply Message *</label>
-          <textarea class="form-textarea" id="trainContent" rows="12" placeholder="Paste an example reply you've written here. The AI will study your tone, phrasing, greeting style, and sign-off to match your writing style.&#10;&#10;Example:&#10;Hi Mike,&#10;&#10;Thanks for getting back to me. I took a look at the scope you outlined and it lines up well with what we handle.&#10;&#10;I put together a quick overview of our process and availability here: https://example.com/schedule&#10;&#10;Let me know if Thursday or Friday works for a quick call.&#10;&#10;Best,&#10;Keith Tetreault&#10;Estimator" style="min-height:220px"></textarea>
+          <textarea class="form-textarea" id="trainContent" rows="12" placeholder="Paste an example reply you've written here..." style="min-height:220px"></textarea>
         </div>
       </div>
       <div class="modal-footer">
@@ -440,50 +493,234 @@
     </div>
   </div>
 
+  <!-- ADD TENANT MODAL -->
+  <div class="modal-overlay" id="addTenantModal">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <h3 id="tenantModalTitle"><i class="fas fa-plus-circle"></i> Create Child Tenant</h3>
+        <button class="btn-ghost" onclick="closeModal('addTenantModal')"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label>Tenant Name *</label>
+            <input class="form-input" id="tenantName" placeholder="e.g. Company XYZ">
+          </div>
+          <div class="form-group">
+            <label>Password <span style="font-weight:normal;color:var(--text3)">(auto-generated if blank)</span></label>
+            <input class="form-input" id="tenantPassword" placeholder="Leave blank for auto-generate">
+          </div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+        <h4 style="font-size:13px;margin-bottom:12px;color:var(--teal)"><i class="fas fa-brain"></i> AI Config (Optional — inherits from master if empty)</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label>AI Provider</label>
+            <select class="form-select" id="tenantAiProvider">
+              <option value="">Inherit from master</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="openai">OpenAI / DeepSeek</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>AI API Key</label>
+            <input class="form-input" id="tenantAiKey" type="password" placeholder="Inherit from master">
+          </div>
+          <div class="form-group">
+            <label>AI Model</label>
+            <input class="form-input" id="tenantAiModel" placeholder="Inherit from master">
+          </div>
+          <div class="form-group">
+            <label>AI Base URL</label>
+            <input class="form-input" id="tenantAiBaseUrl" placeholder="Inherit from master">
+          </div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+        <h4 style="font-size:13px;margin-bottom:12px;color:var(--accent)"><i class="fas fa-link"></i> Campaign URLs (up to 5)</h4>
+        <div class="form-group"><input class="form-input" id="tenantUrl1" placeholder="Campaign URL #1"></div>
+        <div class="form-group"><input class="form-input" id="tenantUrl2" placeholder="Campaign URL #2"></div>
+        <div class="form-group"><input class="form-input" id="tenantUrl3" placeholder="Campaign URL #3"></div>
+        <div class="form-group"><input class="form-input" id="tenantUrl4" placeholder="Campaign URL #4"></div>
+        <div class="form-group"><input class="form-input" id="tenantUrl5" placeholder="Campaign URL #5"></div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea class="form-textarea" id="tenantNotes" rows="3" placeholder="Optional notes about this tenant"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('addTenantModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTenant()"><i class="fas fa-save"></i> Create Tenant</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TENANT CREDENTIALS MODAL (shown after creation) -->
+  <div class="modal-overlay" id="tenantCredsModal">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3><i class="fas fa-key" style="color:var(--green)"></i> Tenant Created Successfully!</h3>
+        <button class="btn-ghost" onclick="closeModal('tenantCredsModal')"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div style="background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.2);border-radius:10px;padding:16px;margin-bottom:16px">
+          <div style="font-size:12px;color:var(--green);font-weight:700;margin-bottom:8px"><i class="fas fa-exclamation-triangle"></i> Save these credentials — the password won't be shown again!</div>
+        </div>
+        <div class="form-group">
+          <label>Dashboard URL</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="form-input" id="credsDashUrl" readonly style="font-family:monospace;font-size:12px">
+            <span class="copy-btn" onclick="copyField('credsDashUrl')" title="Copy"><i class="fas fa-copy"></i></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Tenant Slug</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="form-input" id="credsSlug" readonly style="font-family:monospace;font-size:12px">
+            <span class="copy-btn" onclick="copyField('credsSlug')" title="Copy"><i class="fas fa-copy"></i></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="form-input" id="credsPassword" readonly style="font-family:monospace;font-size:12px">
+            <span class="copy-btn" onclick="copyField('credsPassword')" title="Copy"><i class="fas fa-copy"></i></span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="closeModal('tenantCredsModal')"><i class="fas fa-check"></i> Got it</button>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST -->
   <div class="toast-container" id="toastContainer"></div>
 
   <script>
     // ═══════════════════════════════════════════
-    // AUTOREPLY ENGINE — Dashboard JS
+    // AUTOREPLY ENGINE v2.0 — Dashboard JS
+    // Multi-tenant aware
     // ═══════════════════════════════════════════
 
-    const PW = new URLSearchParams(location.search).get('pw') || 'admin123';
-    const API = (path) => `/api${path}${path.includes('?') ? '&' : '?'}pw=${encodeURIComponent(PW)}`;
+    const params = new URLSearchParams(location.search);
+    let PW = params.get('pw') || 'admin123';
+    let TENANT_SLUG = params.get('tenant') || '';
+    let isMaster = false;
+    let currentTenantId = null;
     let currentPanel = 'overview';
     let accountsCache = [];
     let editingAccountId = null;
     let editingTrainingId = null;
+    let editingTenantId = null;
     let lastEmailCount = 0;
     let autoSyncInterval = null;
 
-    // ─── Init ───
-    async function init() {
-      await loadStats();
-      await loadActivity();
-      await loadApprovalQueue();
-      await loadAccounts();
-      checkEngineStatus();
-      // Auto-sync: refresh active panel + stats every 12s
-      autoSyncInterval = setInterval(autoSync, 12000);
+    function API(path) {
+      let url = `/api${path}`;
+      const sep = url.includes('?') ? '&' : '?';
+      url += `${sep}pw=${encodeURIComponent(PW)}`;
+      if (TENANT_SLUG) url += `&tenant=${encodeURIComponent(TENANT_SLUG)}`;
+      return url;
     }
 
-    // ─── Auto-Sync (refreshes whatever panel is active + stats) ───
+    // API call with specific tenant override (for master switching)
+    function TAPI(path, slug) {
+      let url = `/api${path}`;
+      const sep = url.includes('?') ? '&' : '?';
+      url += `${sep}pw=${encodeURIComponent(PW)}`;
+      if (slug) url += `&tenant=${encodeURIComponent(slug)}`;
+      return url;
+    }
+
+    // ─── Init ───
+    async function init() {
+      try {
+        const whoami = await fetch(API('/whoami')).then(r => r.json());
+        if (whoami.error) {
+          document.querySelector('.content').innerHTML = `
+            <div class="empty-state" style="padding-top:100px">
+              <div class="icon"><i class="fas fa-lock"></i></div>
+              <h3>Authentication Required</h3>
+              <p>Invalid password or tenant. Access via: <code style="color:var(--accent)">?pw=PASSWORD</code> or <code style="color:var(--accent)">?tenant=SLUG&pw=PASSWORD</code></p>
+            </div>`;
+          return;
+        }
+
+        isMaster = whoami.is_master;
+        currentTenantId = whoami.tenant_id;
+
+        // Update sidebar info
+        document.getElementById('tenantLabel').textContent = whoami.is_master
+          ? `Master: ${whoami.tenant_name}`
+          : whoami.tenant_name;
+        document.getElementById('tenantInfo').style.color = whoami.is_master ? 'var(--orange)' : 'var(--teal)';
+
+        // Show master-only UI
+        if (isMaster) {
+          document.getElementById('navMasterSection').style.display = 'block';
+          document.getElementById('masterEngineControls').style.display = 'inline';
+          document.getElementById('tenantSwitcher').style.display = 'block';
+          await loadTenantSwitcher();
+        }
+
+        await loadStats();
+        await loadActivity();
+        await loadApprovalQueue();
+        await loadAccounts();
+        checkEngineStatus();
+        autoSyncInterval = setInterval(autoSync, 12000);
+      } catch (e) {
+        console.error('Init error:', e);
+        document.querySelector('.content').innerHTML = `
+          <div class="empty-state" style="padding-top:100px">
+            <div class="icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <h3>Connection Error</h3>
+            <p>Could not connect to the API. Is the server running?</p>
+          </div>`;
+      }
+    }
+
+    // ─── Tenant Switcher (master only) ───
+    async function loadTenantSwitcher() {
+      try {
+        // Use master credentials without tenant override
+        const tenants = await fetch(TAPI('/tenants', '')).then(r => r.json());
+        const sel = document.getElementById('tenantSelect');
+        sel.innerHTML = '<option value="">Master View (Global)</option>';
+        for (const t of tenants) {
+          if (t.is_master) continue; // skip master from dropdown
+          sel.innerHTML += `<option value="${esc(t.slug)}" ${TENANT_SLUG === t.slug ? 'selected' : ''}>${esc(t.name)} (${esc(t.slug)})</option>`;
+        }
+      } catch (e) { console.warn('Tenant switcher load error:', e); }
+    }
+
+    function switchTenant() {
+      const slug = document.getElementById('tenantSelect').value;
+      TENANT_SLUG = slug;
+      // Update URL without reload
+      const url = new URL(location.href);
+      if (slug) url.searchParams.set('tenant', slug);
+      else url.searchParams.delete('tenant');
+      history.replaceState(null, '', url.toString());
+      // Reload everything
+      init();
+    }
+
+    // ─── Auto-Sync ───
     async function autoSync() {
       try {
         const prevCount = lastEmailCount;
         await loadStats();
         await checkEngineStatus();
-        // Refresh active panel data
         if (currentPanel === 'approval') await loadApprovalQueue();
         else if (currentPanel === 'emails') await loadEmails();
         else if (currentPanel === 'activity') await loadActivity();
         else if (currentPanel === 'overview') await loadActivity();
         else if (currentPanel === 'training') await loadTrainingMessages();
-        // Notify if new emails arrived
+        else if (currentPanel === 'tenants' && isMaster) await loadTenants();
         if (lastEmailCount > prevCount && prevCount > 0) {
-          const diff = lastEmailCount - prevCount;
-          toast(`${diff} new email${diff > 1 ? 's' : ''} received`, 'info');
+          toast(`${lastEmailCount - prevCount} new email(s) received`, 'info');
         }
       } catch(e) { console.error('Auto-sync error:', e); }
     }
@@ -497,7 +734,7 @@
       if (panel) panel.classList.add('active');
       const nav = document.querySelector(`.nav-item[data-panel="${name}"]`);
       if (nav) nav.classList.add('active');
-      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', settings:'Settings' };
+      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
       document.getElementById('topbarTitle').textContent = titles[name] || name;
       if (name === 'emails') loadEmails();
       if (name === 'approval') loadApprovalQueue();
@@ -505,25 +742,40 @@
       if (name === 'activity') loadActivity();
       if (name === 'settings') loadSettings();
       if (name === 'training') loadTrainingMessages();
+      if (name === 'tenants') loadTenants();
     }
 
     // ─── Stats ───
     async function loadStats() {
       try {
         const r = await fetch(API('/stats')).then(r => r.json());
-        document.getElementById('statsRow').innerHTML = `
-          <div class="stat-card"><div class="label">Active Accounts</div><div class="value">${r.active_accounts||0}</div></div>
-          <div class="stat-card"><div class="label">Emails (24h)</div><div class="value">${r.last_24h||0}</div><div class="sub">${r.total_emails||0} total</div></div>
-          <div class="stat-card"><div class="label">Real Replies</div><div class="value" style="color:var(--green)">${r.real_replies||0}</div><div class="sub">${r.auto_replies_detected||0} auto detected</div></div>
-          <div class="stat-card"><div class="label">Sent</div><div class="value" style="color:var(--blue)">${r.sent_replies||0}</div></div>
-          <div class="stat-card"><div class="label">Pending Approval</div><div class="value" style="color:var(--yellow)">${r.pending_approval||0}</div></div>
-          <div class="stat-card"><div class="label">Scheduled</div><div class="value" style="color:var(--accent)">${r.scheduled||0}</div></div>
-          <div class="stat-card"><div class="label">Failed</div><div class="value" style="color:var(--red)">${r.failed||0}</div></div>
-          <div class="stat-card"><div class="label">Engine</div><div class="value" style="font-size:14px;color:${r.engine_running?'var(--green)':'var(--red)'}">${r.engine_running?'RUNNING':'STOPPED'}</div></div>
-        `;
-        // Track total email count for auto-sync new-email detection
+        const isMasterView = r.is_master;
+        let statsHtml = '';
+        if (isMasterView) {
+          statsHtml = `
+            <div class="stat-card"><div class="label">Tenants</div><div class="value" style="color:var(--orange)">${r.active_tenants||0}</div><div class="sub">active</div></div>
+            <div class="stat-card"><div class="label">Accounts</div><div class="value">${r.active_accounts||0}</div><div class="sub">active</div></div>
+            <div class="stat-card"><div class="label">Emails (24h)</div><div class="value">${r.last_24h||0}</div><div class="sub">${r.total_emails||0} total</div></div>
+            <div class="stat-card"><div class="label">Real Replies</div><div class="value" style="color:var(--green)">${r.real_replies||0}</div></div>
+            <div class="stat-card"><div class="label">Sent</div><div class="value" style="color:var(--blue)">${r.sent_replies||0}</div></div>
+            <div class="stat-card"><div class="label">Pending</div><div class="value" style="color:var(--yellow)">${r.pending_approval||0}</div></div>
+            <div class="stat-card"><div class="label">Scheduled</div><div class="value" style="color:var(--accent)">${r.scheduled||0}</div></div>
+            <div class="stat-card"><div class="label">Engine</div><div class="value" style="font-size:14px;color:${r.engine_running?'var(--green)':'var(--red)'}">${r.engine_running?'RUNNING':'STOPPED'}</div></div>
+          `;
+        } else {
+          statsHtml = `
+            <div class="stat-card"><div class="label">Accounts</div><div class="value">${r.active_accounts||0}</div></div>
+            <div class="stat-card"><div class="label">Emails (24h)</div><div class="value">${r.last_24h||0}</div><div class="sub">${r.total_emails||0} total</div></div>
+            <div class="stat-card"><div class="label">Real Replies</div><div class="value" style="color:var(--green)">${r.real_replies||0}</div></div>
+            <div class="stat-card"><div class="label">Sent</div><div class="value" style="color:var(--blue)">${r.sent_replies||0}</div></div>
+            <div class="stat-card"><div class="label">Pending</div><div class="value" style="color:var(--yellow)">${r.pending_approval||0}</div></div>
+            <div class="stat-card"><div class="label">Scheduled</div><div class="value" style="color:var(--accent)">${r.scheduled||0}</div></div>
+            <div class="stat-card"><div class="label">Failed</div><div class="value" style="color:var(--red)">${r.failed||0}</div></div>
+            <div class="stat-card"><div class="label">Engine</div><div class="value" style="font-size:14px;color:${r.engine_running?'var(--green)':'var(--red)'}">${r.engine_running?'RUNNING':'STOPPED'}</div></div>
+          `;
+        }
+        document.getElementById('statsRow').innerHTML = statsHtml;
         lastEmailCount = r.total_emails || 0;
-        // Update approval badge
         const badge = document.getElementById('navApprovalCount');
         if ((r.pending_approval||0) > 0) { badge.style.display='inline'; badge.textContent=r.pending_approval; }
         else { badge.style.display='none'; }
@@ -539,10 +791,10 @@
         const btn = document.getElementById('btnStartEngine');
         if (r.running) {
           dot.className='engine-dot on'; label.textContent='Engine running';
-          btn.innerHTML='<i class="fas fa-stop"></i> Stop Engine'; btn.className='btn btn-danger btn-sm';
+          if (btn) { btn.innerHTML='<i class="fas fa-stop"></i> Stop Engine'; btn.className='btn btn-danger btn-sm'; }
         } else {
           dot.className='engine-dot off'; label.textContent='Engine stopped';
-          btn.innerHTML='<i class="fas fa-play"></i> Start Engine'; btn.className='btn btn-success btn-sm';
+          if (btn) { btn.innerHTML='<i class="fas fa-play"></i> Start Engine'; btn.className='btn btn-success btn-sm'; }
         }
       } catch(e) {}
     }
@@ -553,9 +805,168 @@
       try {
         await fetch(API(isOn ? '/engine/stop' : '/engine/start'), { method:'POST' });
         toast(isOn ? 'Engine stopped' : 'Engine started', 'success');
-        checkEngineStatus();
-        loadStats();
+        checkEngineStatus(); loadStats();
       } catch(e) { toast('Engine error: ' + e.message, 'error'); }
+    }
+
+    // ─── Tenant Management (master only) ───
+    async function loadTenants() {
+      if (!isMaster) return;
+      try {
+        const tenants = await fetch(TAPI('/tenants', '')).then(r => r.json());
+        if (!tenants.length) {
+          document.getElementById('tenantsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-sitemap"></i></div><h3>No tenants yet</h3></div>';
+          return;
+        }
+        document.getElementById('tenantsList').innerHTML = tenants.map(t => `
+          <div class="tenant-card ${t.is_master ? 'master' : 'child'}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                  <span style="font-size:15px;font-weight:700">${esc(t.name)}</span>
+                  <span class="badge-pill ${t.is_master?'badge-orange':'badge-teal'}">${t.is_master?'MASTER':'CHILD'}</span>
+                  <span class="badge-pill ${t.is_active?'badge-green':'badge-red'}">${t.is_active?'Active':'Inactive'}</span>
+                </div>
+                <div style="font-size:12px;color:var(--text2);margin-bottom:4px;font-family:monospace">
+                  <i class="fas fa-fingerprint" style="color:var(--text3);width:14px"></i> ${esc(t.slug)}
+                </div>
+                <div style="font-size:11px;color:var(--text3);margin-bottom:4px">
+                  <i class="fas fa-brain" style="width:14px"></i>
+                  AI: ${t.ai_api_key ? `${esc(t.ai_provider||'openrouter')} / ${esc(t.ai_model||'default')} (own key)` : '<span style="color:var(--teal)">Inherits from master</span>'}
+                </div>
+                <div style="font-size:11px;color:var(--text3)">
+                  <i class="fas fa-link" style="width:14px"></i>
+                  URLs: ${[t.campaign_url_1,t.campaign_url_2,t.campaign_url_3,t.campaign_url_4,t.campaign_url_5].filter(u=>u).length}/5
+                  <span style="margin-left:8px"><i class="fas fa-shield-alt" style="width:14px"></i> Guard: ${t.max_replies_per_sender} max / ${t.sender_cooldown_hours}h cooldown</span>
+                </div>
+                ${t.notes ? `<div style="font-size:11px;color:var(--text3);margin-top:4px"><i class="fas fa-sticky-note" style="width:14px"></i> ${esc(t.notes.substring(0, 100))}</div>` : ''}
+                ${!t.is_master ? `<div style="font-size:11px;margin-top:6px;color:var(--accent)">
+                  <i class="fas fa-external-link-alt" style="width:14px"></i>
+                  <a href="?tenant=${encodeURIComponent(t.slug)}&pw=${encodeURIComponent(t.password !== '***' ? t.password : 'PASSWORD')}" style="color:var(--accent)" target="_blank">Open Dashboard</a>
+                </div>` : ''}
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                ${!t.is_master ? `
+                  <button class="btn btn-primary btn-xs" onclick="editTenant(${t.id})" title="Edit"><i class="fas fa-pen"></i></button>
+                  <button class="btn ${t.is_active?'btn-warning':'btn-success'} btn-xs" onclick="toggleTenant(${t.id},${t.is_active?0:1})" title="${t.is_active?'Disable':'Enable'}"><i class="fas fa-${t.is_active?'pause':'play'}"></i></button>
+                  <button class="btn btn-danger btn-xs" onclick="deleteTenant(${t.id})" title="Delete"><i class="fas fa-trash"></i></button>
+                ` : `
+                  <button class="btn btn-primary btn-xs" onclick="switchPanel('settings')" title="Edit master settings"><i class="fas fa-cog"></i></button>
+                `}
+              </div>
+            </div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Tenants error:', e); }
+    }
+
+    function showAddTenantModal() {
+      editingTenantId = null;
+      document.getElementById('tenantModalTitle').innerHTML = '<i class="fas fa-plus-circle"></i> Create Child Tenant';
+      document.getElementById('tenantName').value = '';
+      document.getElementById('tenantPassword').value = '';
+      document.getElementById('tenantAiProvider').value = '';
+      document.getElementById('tenantAiKey').value = '';
+      document.getElementById('tenantAiModel').value = '';
+      document.getElementById('tenantAiBaseUrl').value = '';
+      for (let i = 1; i <= 5; i++) document.getElementById('tenantUrl'+i).value = '';
+      document.getElementById('tenantNotes').value = '';
+      openModal('addTenantModal');
+    }
+
+    async function editTenant(id) {
+      try {
+        const t = await fetch(TAPI(`/tenants/${id}`, '')).then(r => r.json());
+        editingTenantId = id;
+        document.getElementById('tenantModalTitle').innerHTML = '<i class="fas fa-pen"></i> Edit Tenant';
+        document.getElementById('tenantName').value = t.name;
+        document.getElementById('tenantPassword').value = '';
+        document.getElementById('tenantAiProvider').value = t.ai_provider || '';
+        document.getElementById('tenantAiKey').value = t.ai_api_key || '';
+        document.getElementById('tenantAiModel').value = t.ai_model || '';
+        document.getElementById('tenantAiBaseUrl').value = t.ai_base_url || '';
+        document.getElementById('tenantUrl1').value = t.campaign_url_1 || '';
+        document.getElementById('tenantUrl2').value = t.campaign_url_2 || '';
+        document.getElementById('tenantUrl3').value = t.campaign_url_3 || '';
+        document.getElementById('tenantUrl4').value = t.campaign_url_4 || '';
+        document.getElementById('tenantUrl5').value = t.campaign_url_5 || '';
+        document.getElementById('tenantNotes').value = t.notes || '';
+        openModal('addTenantModal');
+      } catch(e) { toast('Error loading tenant', 'error'); }
+    }
+
+    async function saveTenant() {
+      const data = {
+        name: document.getElementById('tenantName').value.trim(),
+        password: document.getElementById('tenantPassword').value,
+        ai_provider: document.getElementById('tenantAiProvider').value || null,
+        ai_api_key: document.getElementById('tenantAiKey').value || null,
+        ai_model: document.getElementById('tenantAiModel').value || null,
+        ai_base_url: document.getElementById('tenantAiBaseUrl').value || null,
+        campaign_url_1: document.getElementById('tenantUrl1').value.trim(),
+        campaign_url_2: document.getElementById('tenantUrl2').value.trim(),
+        campaign_url_3: document.getElementById('tenantUrl3').value.trim(),
+        campaign_url_4: document.getElementById('tenantUrl4').value.trim(),
+        campaign_url_5: document.getElementById('tenantUrl5').value.trim(),
+        notes: document.getElementById('tenantNotes').value.trim(),
+      };
+      if (!data.name) { toast('Tenant name required', 'error'); return; }
+
+      try {
+        if (editingTenantId) {
+          // Edit existing
+          if (!data.password) delete data.password;
+          const r = await fetch(TAPI(`/tenants/${editingTenantId}`, ''), {
+            method: 'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+          }).then(r => r.json());
+          if (r.success) { toast('Tenant updated', 'success'); closeModal('addTenantModal'); loadTenants(); loadTenantSwitcher(); }
+          else toast(r.error || 'Failed', 'error');
+        } else {
+          // Create new
+          const r = await fetch(TAPI('/tenants', ''), {
+            method: 'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+          }).then(r => r.json());
+          if (r.success || r.id) {
+            closeModal('addTenantModal');
+            // Show credentials
+            const baseUrl = location.origin;
+            document.getElementById('credsDashUrl').value = `${baseUrl}/?tenant=${r.slug}&pw=${r.password}`;
+            document.getElementById('credsSlug').value = r.slug;
+            document.getElementById('credsPassword').value = r.password;
+            openModal('tenantCredsModal');
+            loadTenants();
+            loadTenantSwitcher();
+          } else toast(r.error || 'Failed', 'error');
+        }
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function toggleTenant(id, newActive) {
+      try {
+        const r = await fetch(TAPI(`/tenants/${id}`, ''), {
+          method: 'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ is_active: newActive })
+        }).then(r => r.json());
+        if (r.success) { toast(newActive ? 'Tenant enabled' : 'Tenant disabled', 'success'); loadTenants(); }
+        else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function deleteTenant(id) {
+      if (!confirm('Delete this tenant? ALL its accounts, emails, and training data will be permanently lost!')) return;
+      try {
+        const r = await fetch(TAPI(`/tenants/${id}`, ''), { method:'DELETE' }).then(r => r.json());
+        if (r.success) { toast('Tenant deleted', 'success'); loadTenants(); loadTenantSwitcher(); }
+        else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    function copyField(inputId) {
+      const el = document.getElementById(inputId);
+      el.select();
+      navigator.clipboard.writeText(el.value).then(() => toast('Copied!', 'success')).catch(() => {
+        document.execCommand('copy');
+        toast('Copied!', 'success');
+      });
     }
 
     // ─── Accounts ───
@@ -563,10 +974,8 @@
       try {
         const accounts = await fetch(API('/accounts')).then(r => r.json());
         accountsCache = accounts;
-        // Update filter dropdown
         const sel = document.getElementById('emailFilterAccount');
         sel.innerHTML = '<option value="">All accounts</option>' + accounts.map(a => `<option value="${a.id}">${esc(a.email)}</option>`).join('');
-
         if (!accounts.length) {
           document.getElementById('accountsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-envelope-open"></i></div><h3>No accounts yet</h3><p>Click "Add Account" to connect your first email account</p></div>';
           return;
@@ -603,6 +1012,7 @@
 
     function showAddAccountModal() {
       editingAccountId = null;
+      document.getElementById('accountModalTitle').innerHTML = '<i class="fas fa-plus-circle"></i> Add Email Account';
       document.getElementById('accEmail').value = '';
       document.getElementById('accPassword').value = '';
       document.getElementById('accImapHost').value = 'mail.spacemail.com';
@@ -624,6 +1034,7 @@
       try {
         const a = await fetch(API(`/accounts/${id}`)).then(r => r.json());
         editingAccountId = id;
+        document.getElementById('accountModalTitle').innerHTML = '<i class="fas fa-pen"></i> Edit Account';
         document.getElementById('accEmail').value = a.email;
         document.getElementById('accPassword').value = '';
         document.getElementById('accImapHost').value = a.imap_host;
@@ -660,7 +1071,6 @@
       };
       if (!data.email) { toast('Email required', 'error'); return; }
       if (!editingAccountId && !data.password) { toast('Password required', 'error'); return; }
-      // Don't send empty password on edit
       if (editingAccountId && !data.password) delete data.password;
 
       try {
@@ -669,9 +1079,8 @@
         const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
         if (r.success || r.id) {
           toast(editingAccountId ? 'Account updated' : 'Account added', 'success');
-          closeModal('addAccountModal');
-          loadAccounts();
-        } else { toast(r.error || 'Failed', 'error'); }
+          closeModal('addAccountModal'); loadAccounts();
+        } else toast(r.error || 'Failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
@@ -690,7 +1099,7 @@
         const r = await fetch(API('/accounts/test'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
         let html = '';
         html += `<div style="margin-bottom:4px"><span style="color:${r.imap.success?'var(--green)':'var(--red)'}"><i class="fas fa-${r.imap.success?'check':'times'}"></i> IMAP: ${r.imap.success?`Connected (${r.imap.messages} messages, ${r.imap.unseen} unread)`:esc(r.imap.error)}</span></div>`;
-        html += `<div><span style="color:${r.smtp.success?'var(--green)':'var(--red)'}"><i class="fas fa-${r.smtp.success?'check':'times'}"></i> SMTP: ${r.smtp.success?'Connected':''+esc(r.smtp.error)}</span></div>`;
+        html += `<div><span style="color:${r.smtp.success?'var(--green)':'var(--red)'}"><i class="fas fa-${r.smtp.success?'check':'times'}"></i> SMTP: ${r.smtp.success?'Connected':esc(r.smtp.error)}</span></div>`;
         document.getElementById('testResult').innerHTML = html;
       } catch(e) { document.getElementById('testResult').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`; }
     }
@@ -699,8 +1108,7 @@
       if (!confirm('Delete this account and all its emails?')) return;
       try {
         await fetch(API(`/accounts/${id}`), { method:'DELETE' });
-        toast('Account deleted', 'success');
-        loadAccounts();
+        toast('Account deleted', 'success'); loadAccounts();
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
@@ -751,7 +1159,7 @@
 
     async function approveReply(id) {
       try {
-        const r = await fetch(API(`/emails/${id}/approve`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({}) }).then(r => r.json());
+        const r = await fetch(API(`/emails/${id}/approve`), { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }).then(r => r.json());
         if (r.success) { toast('Reply approved — will send shortly', 'success'); loadApprovalQueue(); loadStats(); }
         else toast(r.error || 'Failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
@@ -772,27 +1180,25 @@
       if (!confirm('Skip this email? No reply will be sent.')) return;
       try {
         await fetch(API(`/emails/${id}/skip`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ reason:'Manually skipped from dashboard' }) });
-        toast('Email skipped', 'info');
-        loadApprovalQueue();
-        loadStats();
+        toast('Email skipped', 'info'); loadApprovalQueue(); loadStats();
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
     async function regenerateReply(id) {
       toast('Regenerating reply with AI...', 'info');
       try {
-        const r = await fetch(API(`/emails/${id}/regenerate`), { method:'POST', headers:{'Content-Type':'application/json'} }).then(r => r.json());
-        if (r.success) { toast('Reply regenerated successfully', 'success'); loadApprovalQueue(); }
-        else toast(r.error || 'Regeneration failed', 'error');
+        const r = await fetch(API(`/emails/${id}/regenerate`), { method:'POST' }).then(r => r.json());
+        if (r.success) { toast('Reply regenerated', 'success'); loadApprovalQueue(); }
+        else toast(r.error || 'Failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
     async function processPendingEmails() {
       toast('Processing pending emails...', 'info');
       try {
-        const r = await fetch(API('/emails/process-pending'), { method:'POST', headers:{'Content-Type':'application/json'} }).then(r => r.json());
+        const r = await fetch(API('/emails/process-pending'), { method:'POST' }).then(r => r.json());
         if (r.success) { toast(`Processed ${r.processed} email(s), ${r.realReplies} real replies`, 'success'); loadStats(); loadApprovalQueue(); loadEmails(); }
-        else toast(r.error || 'Processing failed', 'error');
+        else toast(r.error || 'Failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
@@ -804,7 +1210,7 @@
         const emails = await fetch(url).then(r => r.json());
         document.getElementById('emailInfo').textContent = `${emails.length} email(s)`;
         if (!emails.length) {
-          document.getElementById('emailsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-inbox"></i></div><h3>No emails yet</h3><p>The engine will fetch emails once started</p></div>';
+          document.getElementById('emailsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-inbox"></i></div><h3>No emails yet</h3></div>';
           return;
         }
         const classBadge = (c) => {
@@ -883,8 +1289,8 @@
     }
 
     function formatActivityEntry(e) {
-      const typeIcon = { fetch:'fa-download', reply_sent:'fa-paper-plane', scheduled:'fa-clock', draft:'fa-file-alt', skipped:'fa-ban', error:'fa-exclamation-triangle', approved:'fa-check', system:'fa-cog', account_added:'fa-user-plus', account_updated:'fa-user-edit', account_deleted:'fa-user-minus', settings:'fa-cog' };
-      const typeColor = { fetch:'var(--blue)', reply_sent:'var(--green)', scheduled:'var(--accent)', draft:'var(--yellow)', skipped:'var(--text3)', error:'var(--red)', approved:'var(--green)', system:'var(--text3)' };
+      const typeIcon = { fetch:'fa-download', reply_sent:'fa-paper-plane', scheduled:'fa-clock', draft:'fa-file-alt', skipped:'fa-ban', error:'fa-exclamation-triangle', approved:'fa-check', system:'fa-cog', account_added:'fa-user-plus', account_updated:'fa-user-edit', account_deleted:'fa-user-minus', settings:'fa-cog', training:'fa-graduation-cap', batch_process:'fa-bolt', regenerated:'fa-rotate', tenant_created:'fa-plus-circle', tenant_updated:'fa-pen', tenant_deleted:'fa-trash' };
+      const typeColor = { fetch:'var(--blue)', reply_sent:'var(--green)', scheduled:'var(--accent)', draft:'var(--yellow)', skipped:'var(--text3)', error:'var(--red)', approved:'var(--green)', system:'var(--text3)', tenant_created:'var(--teal)', tenant_deleted:'var(--red)' };
       return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start">
         <span style="color:${typeColor[e.type]||'var(--text3)'};width:18px;text-align:center;flex-shrink:0;margin-top:1px"><i class="fas ${typeIcon[e.type]||'fa-circle'}"></i></span>
         <span style="color:var(--text3);min-width:130px;font-family:monospace;font-size:11px;flex-shrink:0">${timeAgo(e.created_at)}</span>
@@ -905,12 +1311,11 @@
           <option value="deepseek/deepseek-v4-flash:free">DeepSeek V4 Flash (best, free)</option>
           <option value="nvidia/nemotron-3-super-120b-a12b:free">Nemotron 3 Super 120B (free)</option>
           <option value="google/gemma-4-31b-it:free">Gemma 4 31B (free)</option>
-          <option value="minimax/minimax-m2.5:free">MiniMax M2.5 (free)</option>
-          <option value="nvidia/nemotron-nano-9b-v2:free">Nemotron Nano 9B (fastest, free)</option>
-          <option value="openrouter/free">Auto-select free model</option>
+          <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (free)</option>
+          <option value="qwen/qwen3-next-80b-a3b-instruct:free">Qwen 3 Next 80B (free)</option>
         `;
         baseUrlGroup.style.display = 'none';
-        helpEl.innerHTML = 'Get free key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--accent)">openrouter.ai/settings/keys</a> — no credit card needed';
+        helpEl.innerHTML = 'Get key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--accent)">openrouter.ai/settings/keys</a>';
       } else if (provider === 'gemini') {
         modelSel.innerHTML = `
           <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, free)</option>
@@ -927,7 +1332,7 @@
           <option value="mistral-small-latest">Mistral Small</option>
         `;
         baseUrlGroup.style.display = 'block';
-        helpEl.innerHTML = 'For DeepSeek: <a href="https://platform.deepseek.com" target="_blank" style="color:var(--accent)">platform.deepseek.com</a> · For OpenAI: <a href="https://platform.openai.com" target="_blank" style="color:var(--accent)">platform.openai.com</a>';
+        helpEl.innerHTML = 'For DeepSeek: <a href="https://platform.deepseek.com" target="_blank" style="color:var(--accent)">platform.deepseek.com</a>';
       }
     }
 
@@ -935,37 +1340,29 @@
       try {
         const s = await fetch(API('/settings')).then(r => r.json());
         document.getElementById('setAdminPw').value = s.admin_password || '';
-        document.getElementById('setAiProvider').value = s.ai_provider || 'gemini';
+        document.getElementById('setAiProvider').value = s.ai_provider || 'openrouter';
         document.getElementById('setAiKey').value = s.ai_api_key || '';
         updateModelOptions();
-        document.getElementById('setAiModel').value = s.ai_model || 'gemini-2.0-flash';
+        document.getElementById('setAiModel').value = s.ai_model || 'deepseek/deepseek-v4-flash:free';
         document.getElementById('setAiBaseUrl').value = s.ai_base_url || '';
         document.getElementById('setPollInterval').value = s.poll_interval_sec || '120';
-        // Load campaign URLs
-        loadCampaignUrls();
-        // Load conversation guard settings
-        loadGuardSettings();
-      } catch(e) {}
-    }
-
-    async function loadGuardSettings() {
-      try {
-        const g = await fetch(API('/guard-settings')).then(r => r.json());
-        document.getElementById('setMaxReplies').value = g.max_replies_per_sender || '1';
-        document.getElementById('setCooldownHours').value = g.sender_cooldown_hours || '48';
-      } catch(e) { console.error('Guard settings load error:', e); }
-    }
-
-    async function loadCampaignUrls() {
-      try {
-        const r = await fetch(API('/campaign-urls')).then(r => r.json());
-        if (r.urls) {
-          for (let i = 0; i < 5; i++) {
-            const el = document.getElementById(`setCampaignUrl${i+1}`);
-            if (el) el.value = r.urls[i] || '';
-          }
+        document.getElementById('setMaxReplies').value = s.max_replies_per_sender || '1';
+        document.getElementById('setCooldownHours').value = s.sender_cooldown_hours || '48';
+        // Campaign URLs
+        document.getElementById('setCampaignUrl1').value = s.campaign_url_1 || '';
+        document.getElementById('setCampaignUrl2').value = s.campaign_url_2 || '';
+        document.getElementById('setCampaignUrl3').value = s.campaign_url_3 || '';
+        document.getElementById('setCampaignUrl4').value = s.campaign_url_4 || '';
+        document.getElementById('setCampaignUrl5').value = s.campaign_url_5 || '';
+        // Show inheritance banner for child tenants
+        const banner = document.getElementById('aiInheritBanner');
+        if (!s.is_master && !s.ai_api_key && s.resolved_ai_has_key) {
+          banner.style.display = 'block';
+          banner.innerHTML = `<i class="fas fa-arrow-up"></i> Using master's AI config: <strong>${esc(s.resolved_ai_provider)}</strong> / <strong>${esc(s.resolved_ai_model)}</strong>. Set values below to override.`;
+        } else {
+          banner.style.display = 'none';
         }
-      } catch(e) { console.error('Campaign URLs load error:', e); }
+      } catch(e) { console.error('Settings load error:', e); }
     }
 
     async function saveSettings() {
@@ -975,25 +1372,29 @@
         ai_api_key: document.getElementById('setAiKey').value,
         ai_model: document.getElementById('setAiModel').value,
         ai_base_url: document.getElementById('setAiBaseUrl').value,
-        poll_interval_sec: document.getElementById('setPollInterval').value,
+        poll_interval_sec: parseInt(document.getElementById('setPollInterval').value),
+        max_replies_per_sender: parseInt(document.getElementById('setMaxReplies').value),
+        sender_cooldown_hours: parseInt(document.getElementById('setCooldownHours').value),
+        campaign_url_1: document.getElementById('setCampaignUrl1').value.trim(),
+        campaign_url_2: document.getElementById('setCampaignUrl2').value.trim(),
+        campaign_url_3: document.getElementById('setCampaignUrl3').value.trim(),
+        campaign_url_4: document.getElementById('setCampaignUrl4').value.trim(),
+        campaign_url_5: document.getElementById('setCampaignUrl5').value.trim(),
       };
+
       try {
-        // Save general settings
         const r = await fetch(API('/settings'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
-        // Save campaign URLs
-        const urls = [];
-        for (let i = 1; i <= 5; i++) {
-          const el = document.getElementById(`setCampaignUrl${i}`);
-          urls.push(el ? el.value.trim() : '');
-        }
-        await fetch(API('/campaign-urls'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ urls }) });
-        // Save conversation guard settings
-        await fetch(API('/guard-settings'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
-          max_replies_per_sender: document.getElementById('setMaxReplies').value,
-          sender_cooldown_hours: document.getElementById('setCooldownHours').value,
-        }) });
-        if (r.success) toast('All settings saved', 'success');
-        else toast(r.error || 'Failed', 'error');
+        if (r.success) {
+          toast('All settings saved', 'success');
+          // If password changed, update PW variable
+          if (data.admin_password && data.admin_password !== PW) {
+            PW = data.admin_password;
+            const url = new URL(location.href);
+            url.searchParams.set('pw', PW);
+            history.replaceState(null, '', url.toString());
+            toast('Password updated — URL updated automatically', 'info');
+          }
+        } else toast(r.error || 'Failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
@@ -1012,21 +1413,21 @@
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
               <div style="flex:1;min-width:0">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                  ${m.label ? `<span style="font-size:13px;font-weight:600">${esc(m.label)}</span>` : '<span style="font-size:13px;color:var(--text3);font-style:italic">Unlabeled example</span>'}
+                  ${m.label ? `<span style="font-size:13px;font-weight:600">${esc(m.label)}</span>` : '<span style="font-size:13px;color:var(--text3);font-style:italic">Unlabeled</span>'}
                   <span class="badge-pill ${m.is_active?'badge-green':'badge-gray'}">${m.is_active?'Active':'Inactive'}</span>
                 </div>
-                <div style="font-size:12px;color:var(--text2);white-space:pre-wrap;max-height:120px;overflow:hidden;background:var(--bg);padding:10px 12px;border-radius:8px;border:1px solid var(--border);font-family:'Consolas','Fira Code',monospace;line-height:1.6">${esc(m.content)}</div>
+                <div style="font-size:12px;color:var(--text2);white-space:pre-wrap;max-height:120px;overflow:hidden;background:var(--bg);padding:10px 12px;border-radius:8px;border:1px solid var(--border);font-family:monospace;line-height:1.6">${esc(m.content)}</div>
                 <div style="font-size:10px;color:var(--text3);margin-top:6px">Added ${timeAgo(m.created_at)}</div>
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0">
-                <button class="btn ${m.is_active?'btn-secondary':'btn-success'} btn-xs" onclick="toggleTraining(${m.id},${m.is_active?0:1})" title="${m.is_active?'Deactivate':'Activate'}"><i class="fas fa-${m.is_active?'pause':'play'}"></i></button>
-                <button class="btn btn-primary btn-xs" onclick="editTraining(${m.id})" title="Edit"><i class="fas fa-pen"></i></button>
-                <button class="btn btn-danger btn-xs" onclick="deleteTraining(${m.id})" title="Delete"><i class="fas fa-trash"></i></button>
+                <button class="btn ${m.is_active?'btn-secondary':'btn-success'} btn-xs" onclick="toggleTraining(${m.id},${m.is_active?0:1})"><i class="fas fa-${m.is_active?'pause':'play'}"></i></button>
+                <button class="btn btn-primary btn-xs" onclick="editTraining(${m.id})"><i class="fas fa-pen"></i></button>
+                <button class="btn btn-danger btn-xs" onclick="deleteTraining(${m.id})"><i class="fas fa-trash"></i></button>
               </div>
             </div>
           </div>
         `).join('');
-      } catch(e) { console.error('Training messages error:', e); }
+      } catch(e) { console.error('Training error:', e); }
     }
 
     function showAddTrainingModal() {
@@ -1041,27 +1442,27 @@
       try {
         const msgs = await fetch(API('/training-messages')).then(r => r.json());
         const m = msgs.find(x => x.id === id);
-        if (!m) { toast('Message not found', 'error'); return; }
+        if (!m) { toast('Not found', 'error'); return; }
         editingTrainingId = id;
         document.getElementById('trainingModalTitle').innerHTML = '<i class="fas fa-pen"></i> Edit Training Message';
         document.getElementById('trainLabel').value = m.label || '';
         document.getElementById('trainContent').value = m.content || '';
         openModal('trainingModal');
-      } catch(e) { toast('Error loading message', 'error'); }
+      } catch(e) { toast('Error', 'error'); }
     }
 
     async function saveTrainingMessage() {
       const content = document.getElementById('trainContent').value.trim();
-      if (!content) { toast('Message content is required', 'error'); return; }
+      if (!content) { toast('Content required', 'error'); return; }
       const label = document.getElementById('trainLabel').value.trim();
       try {
         if (editingTrainingId) {
           const r = await fetch(API(`/training-messages/${editingTrainingId}`), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label, content, is_active: 1 }) }).then(r => r.json());
-          if (r.success) { toast('Training message updated', 'success'); closeModal('trainingModal'); loadTrainingMessages(); }
+          if (r.success) { toast('Updated', 'success'); closeModal('trainingModal'); loadTrainingMessages(); }
           else toast(r.error || 'Failed', 'error');
         } else {
           const r = await fetch(API('/training-messages'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label, content }) }).then(r => r.json());
-          if (r.id) { toast('Training message added', 'success'); closeModal('trainingModal'); loadTrainingMessages(); }
+          if (r.id) { toast('Added', 'success'); closeModal('trainingModal'); loadTrainingMessages(); }
           else toast(r.error || 'Failed', 'error');
         }
       } catch(e) { toast('Error: ' + e.message, 'error'); }
@@ -1073,18 +1474,16 @@
         const m = msgs.find(x => x.id === id);
         if (!m) return;
         await fetch(API(`/training-messages/${id}`), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label: m.label, content: m.content, is_active: newActive }) });
-        toast(newActive ? 'Message activated' : 'Message deactivated', 'success');
-        loadTrainingMessages();
-      } catch(e) { toast('Error: ' + e.message, 'error'); }
+        toast(newActive ? 'Activated' : 'Deactivated', 'success'); loadTrainingMessages();
+      } catch(e) { toast('Error', 'error'); }
     }
 
     async function deleteTraining(id) {
-      if (!confirm('Delete this training message? The AI will no longer use it as a style example.')) return;
+      if (!confirm('Delete this training message?')) return;
       try {
         await fetch(API(`/training-messages/${id}`), { method:'DELETE' });
-        toast('Training message deleted', 'success');
-        loadTrainingMessages();
-      } catch(e) { toast('Error: ' + e.message, 'error'); }
+        toast('Deleted', 'success'); loadTrainingMessages();
+      } catch(e) { toast('Error', 'error'); }
     }
 
     // ─── Helpers ───
@@ -1111,7 +1510,6 @@
       setTimeout(() => { if(el.parentElement) el.remove(); }, 5000);
     }
 
-    // Close modal on overlay click
     document.addEventListener('click', (e) => {
       if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('show')) e.target.classList.remove('show');
     });

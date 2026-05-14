@@ -1,15 +1,17 @@
 // ═══════════════════════════════════════════════════════════════
 // AUTOREPLY ENGINE — Email Engine (IMAP Monitor + SMTP Sender)
 // Supports any IMAP/SMTP provider (Spacemail, Gmail, etc.)
+// v1.6: Organic threaded replies — looks identical to real email client
+// v2.0: Multi-tenant — tenant_id on email inserts
 // ═══════════════════════════════════════════════════════════════
 
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
-import { stmts, logActivity } from './database.js';
+import { globalStmts, logActivity } from './database.js';
 
-// ─── IMAP: Fetch new emails ───
-export async function fetchNewEmails(account) {
+// ─── IMAP: Fetch new emails (tenant-aware) ───
+export async function fetchNewEmails(account, tenantId = 1) {
   const client = new ImapFlow({
     host: account.imap_host,
     port: account.imap_port,
@@ -31,30 +33,24 @@ export async function fetchNewEmails(account) {
     const lock = await client.getMailboxLock('INBOX');
 
     try {
-      // Check mailbox status first to avoid fetching when no new messages
       const status = await client.status('INBOX', { uidNext: true, messages: true });
       const serverUidNext = status.uidNext || 0;
       
-      // If no new messages since last check, skip the fetch entirely
       if (account.last_uid > 0 && serverUidNext <= account.last_uid + 1) {
         console.log(`[IMAP] No new UIDs for ${account.email} (last: ${account.last_uid}, uidNext: ${serverUidNext})`);
-        stmts.updateAccountLastCheck.run(account.last_uid, account.id);
+        globalStmts.updateAccountLastCheck.run(account.last_uid, account.id);
         lock.release();
         await client.logout();
         return [];
       }
 
-      // SEARCH for new UIDs first, then fetchOne each — avoids "Command failed"
-      // on servers (like Spacemail) where UID range FETCH with string ranges fails
       const searchRange = account.last_uid > 0 ? `${account.last_uid + 1}:*` : '1:*';
       let foundUids = [];
       try {
         foundUids = await client.search({ uid: searchRange }, { uid: true });
-        // Filter out UIDs we already processed (in case server returns last_uid)
         foundUids = foundUids.filter(u => u > account.last_uid);
       } catch (searchErr) {
         console.warn(`[IMAP] UID SEARCH failed for ${account.email}: ${searchErr.message} — falling back to sequence fetch`);
-        // Fallback: use sequence-based fetch for last N messages
         const seqStart = Math.max(1, (status.messages || 1) - 50);
         for await (const msg of client.fetch(`${seqStart}:*`, { uid: true })) {
           if (msg.uid > account.last_uid) foundUids.push(msg.uid);
@@ -63,7 +59,7 @@ export async function fetchNewEmails(account) {
 
       if (foundUids.length === 0) {
         console.log(`[IMAP] No new messages for ${account.email} after SEARCH (last_uid: ${account.last_uid})`);
-        stmts.updateAccountLastCheck.run(account.last_uid, account.id);
+        globalStmts.updateAccountLastCheck.run(account.last_uid, account.id);
         lock.release();
         await client.logout();
         return [];
@@ -71,9 +67,7 @@ export async function fetchNewEmails(account) {
 
       console.log(`[IMAP] Found ${foundUids.length} new UID(s) for ${account.email}: ${foundUids.join(', ')}`);
       let maxUid = account.last_uid;
-      let count = 0;
 
-      // Fetch each message individually using fetchOne — most reliable method
       for (const uid of foundUids) {
         let message;
         try {
@@ -89,13 +83,10 @@ export async function fetchNewEmails(account) {
         }
         if (!message) continue;
 
-        count++;
         if (message.uid > maxUid) maxUid = message.uid;
 
-        // Parse the full message
         const parsed = await simpleParser(message.source);
 
-        // Extract headers we care about for auto-reply detection
         const headers = {};
         const headerKeys = [
           'auto-submitted', 'x-auto-response-suppress', 'precedence',
@@ -108,19 +99,18 @@ export async function fetchNewEmails(account) {
           if (val) headers[key] = typeof val === 'object' ? JSON.stringify(val) : String(val);
         }
 
-        // Check if we already have this message
         const messageId = parsed.messageId || `uid-${message.uid}-${account.id}`;
-        const existing = stmts.getEmailByMessageId.get(messageId, account.id);
+        const existing = globalStmts.getEmailByMessageId.get(messageId, account.id);
         if (existing) continue;
 
         const fromAddr = parsed.from?.value?.[0]?.address || '';
         const fromName = parsed.from?.value?.[0]?.name || '';
         const toAddr = parsed.to?.value?.[0]?.address || account.email;
 
-        // Skip emails FROM ourselves (our own replies)
         if (fromAddr.toLowerCase() === account.email.toLowerCase()) continue;
 
         const emailData = {
+          tenant_id: tenantId,
           account_id: account.id,
           uid: message.uid,
           message_id: messageId,
@@ -135,26 +125,23 @@ export async function fetchNewEmails(account) {
         };
 
         try {
-          const result = stmts.insertEmail.run(emailData);
-          stmts.incrementReceived.run(account.id);
+          const result = globalStmts.insertEmail.run(emailData);
+          globalStmts.incrementReceived.run(account.id);
           emailData.id = result.lastInsertRowid;
           newEmails.push(emailData);
         } catch (e) {
-          // Duplicate or other error — skip
           console.error(`[IMAP] Insert error for ${fromAddr}: ${e.message}`);
         }
       }
 
-      // Update last UID
       if (maxUid > account.last_uid) {
-        stmts.updateAccountLastCheck.run(maxUid, account.id);
+        globalStmts.updateAccountLastCheck.run(maxUid, account.id);
       } else {
-        // Still update the check time even if no new messages
-        stmts.updateAccountLastCheck.run(account.last_uid, account.id);
+        globalStmts.updateAccountLastCheck.run(account.last_uid, account.id);
       }
 
       if (newEmails.length > 0) {
-        logActivity(account.id, 'fetch', `Fetched ${newEmails.length} new email(s)`, 
+        logActivity(tenantId, account.id, 'fetch', `Fetched ${newEmails.length} new email(s)`, 
           newEmails.map(e => `${e.from_email}: ${e.subject}`).join('; '));
       }
 
@@ -165,7 +152,7 @@ export async function fetchNewEmails(account) {
     await client.logout();
   } catch (error) {
     console.error(`[IMAP] Error for ${account.email}:`, error.message);
-    logActivity(account.id, 'error', `IMAP fetch failed: ${error.message}`);
+    logActivity(tenantId, account.id, 'error', `IMAP fetch failed: ${error.message}`);
     try { await client.logout(); } catch(e) {}
     throw error;
   }
@@ -174,16 +161,7 @@ export async function fetchNewEmails(account) {
 }
 
 // ─── SMTP: Send organic threaded reply + IMAP post-send ───
-// Builds the reply exactly like a real email client:
-//   • Our reply text on top
-//   • "On [date], [name] wrote:" separator
-//   • Full original message quoted below (> prefixed in text, <blockquote> in HTML)
-//   • multipart/alternative (text + HTML) — identical to Outlook/Thunderbird/Apple Mail
-//   • Proper In-Reply-To / References threading headers
-// After SMTP, connects via IMAP to:
-//   1. Append the full threaded message to Sent folder
-//   2. Flag the original inbox email as \Answered
-export async function sendReply(account, email, replyText) {
+export async function sendReply(account, email, replyText, tenantId = 1) {
   const transporter = nodemailer.createTransport({
     host: account.smtp_host,
     port: account.smtp_port,
@@ -192,16 +170,14 @@ export async function sendReply(account, email, replyText) {
     tls: { rejectUnauthorized: false },
   });
 
-  // Build reply subject
   let subject = email.subject || '';
   if (!subject.toLowerCase().startsWith('re:')) {
     subject = 'Re: ' + subject;
   }
 
-  // From = real mailbox owner name (not persona — avoids Outlook spam flag)
   const fromName = account.display_name || account.email.split('@')[0];
 
-  // ─── Build quoted original message (like a real email client) ───
+  // ─── Build quoted original message ───
   const origDate = email.received_at
     ? new Date(email.received_at).toLocaleString('en-US', {
         weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -213,7 +189,6 @@ export async function sendReply(account, email, replyText) {
     : email.from_email;
   const quoteLine = `On ${origDate}, ${origFrom} wrote:`;
 
-  // Plain-text body: our reply + blank line + quote header + > prefixed original
   const originalText = (email.body_text || '').trim();
   const quotedText = originalText
     .split('\n')
@@ -221,16 +196,13 @@ export async function sendReply(account, email, replyText) {
     .join('\n');
   const fullText = replyText.trim() + '\n\n' + quoteLine + '\n' + quotedText;
 
-  // HTML body: our reply + styled blockquote with original
   const replyHtml = replyText.trim()
     .split('\n')
     .map(line => line === '' ? '<br>' : `<div>${escapeHtml(line)}</div>`)
     .join('\n');
 
-  // Use original HTML if available, otherwise convert plain text
   let originalHtml;
   if (email.body_html && email.body_html.trim().length > 20) {
-    // Strip <html><head><body> wrappers — just keep the inner content
     originalHtml = email.body_html
       .replace(/<html[^>]*>/gi, '').replace(/<\/html>/gi, '')
       .replace(/<head[\s\S]*?<\/head>/gi, '')
@@ -271,31 +243,30 @@ ${originalHtml}
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log(`[SMTP] Reply sent to ${email.from_email} — MessageId: ${info.messageId}`);
+    console.log(`[SMTP] T${tenantId} Reply sent to ${email.from_email} — MessageId: ${info.messageId}`);
 
-    // ─── IMAP post-send: Sent folder + \Answered flag ───
     try {
       await imapPostSend(account, email, info, fullText, fullHtml, subject, fromName);
     } catch (imapErr) {
       console.warn(`[IMAP] Post-send failed: ${imapErr.message}`);
     }
 
-    stmts.markEmailSent.run(email.id);
-    stmts.incrementReplied.run(account.id);
-    logActivity(account.id, 'reply_sent',
+    globalStmts.markEmailSent.run(email.id);
+    globalStmts.incrementReplied.run(account.id);
+    logActivity(tenantId, account.id, 'reply_sent',
       `Reply sent to ${email.from_email}`,
       `Subject: ${subject} | MessageId: ${info.messageId}`);
 
     return { success: true, messageId: info.messageId };
   } catch (error) {
-    console.error(`[SMTP] Send failed to ${email.from_email}:`, error.message);
-    stmts.markEmailFailed.run(error.message, email.id);
-    logActivity(account.id, 'error', `Reply failed to ${email.from_email}: ${error.message}`);
+    console.error(`[SMTP] T${tenantId} Send failed to ${email.from_email}:`, error.message);
+    globalStmts.markEmailFailed.run(error.message, email.id);
+    logActivity(tenantId, account.id, 'error', `Reply failed to ${email.from_email}: ${error.message}`);
     return { success: false, error: error.message };
   }
 }
 
-// ─── Escape HTML special characters ───
+// ─── Escape HTML ───
 function escapeHtml(str) {
   return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -316,7 +287,7 @@ async function imapPostSend(account, email, smtpInfo, fullText, fullHtml, subjec
   try {
     await client.connect();
 
-    // ── 1. Append to Sent folder (full multipart message) ──
+    // 1. Append to Sent folder
     try {
       let sentFolder = null;
       const mailboxes = await client.list();
@@ -371,7 +342,7 @@ async function imapPostSend(account, email, smtpInfo, fullText, fullHtml, subjec
       console.warn(`[IMAP] Append to Sent failed: ${appendErr.message}`);
     }
 
-    // ── 2. Flag original inbox email as \Answered ──
+    // 2. Flag original as \Answered
     if (email.uid) {
       try {
         const lock = await client.getMailboxLock('INBOX');
@@ -409,11 +380,7 @@ export async function testImapConnection(host, port, email, password) {
     await client.connect();
     const mailbox = await client.status('INBOX', { messages: true, unseen: true });
     await client.logout();
-    return { 
-      success: true, 
-      messages: mailbox.messages, 
-      unseen: mailbox.unseen 
-    };
+    return { success: true, messages: mailbox.messages, unseen: mailbox.unseen };
   } catch (error) {
     try { await client.logout(); } catch(e) {}
     return { success: false, error: error.message };

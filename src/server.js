@@ -1,12 +1,16 @@
 // ═══════════════════════════════════════════════════════════════
-// AUTOREPLY ENGINE — Express Server + API + Dashboard
-// Enterprise-grade auto-reply system
+// AUTOREPLY ENGINE v2.0 — Express Server + Multi-Tenant API
+// Master-child tenant architecture with independent configurations
 // ═══════════════════════════════════════════════════════════════
 
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { stmts, logActivity } from './database.js';
+import crypto from 'crypto';
+import {
+  tenantStmts, getTenantStmts, globalStmts, logActivity,
+  getTenantAIConfig, getTenantCampaignUrls, getTenantGuardSettings, resolveAIConfig,
+} from './database.js';
 import { fetchNewEmails, sendReply, testImapConnection, testSmtpConnection } from './email-engine.js';
 import { classifyEmail, generateReply, resetAIClient } from './ai-classifier.js';
 import { startPolling, stopPolling, triggerAccountPoll, getEngineStatus } from './orchestrator.js';
@@ -21,39 +25,232 @@ app.use(express.static(join(__dirname, '..', 'public')));
 
 const PORT = process.env.PORT || 3000;
 
-// ─── Auth middleware ───
-function requireAuth(req, res, next) {
+// ═══════════════════════════════════════════
+// AUTH MIDDLEWARE — Multi-tenant aware
+// ═══════════════════════════════════════════
+
+// Resolve tenant + authenticate from ?pw= and optional ?tenant=
+// Master password → full access (tenantId = null means "all tenants", or specific if ?tenant= given)
+// Tenant password → access only that tenant's data
+function resolveTenantAuth(req, res, next) {
   const pw = req.query.pw || req.headers['x-admin-password'] || '';
-  const adminPw = stmts.getSetting.get('admin_password')?.value || 'admin123';
-  if (pw === adminPw) return next();
-  return res.status(401).json({ error: 'Unauthorized — add ?pw=YOUR_PASSWORD' });
+  const tenantSlug = req.query.tenant || req.headers['x-tenant'] || '';
+
+  if (!pw) {
+    return res.status(401).json({ error: 'Unauthorized — add ?pw=YOUR_PASSWORD' });
+  }
+
+  const master = tenantStmts.getMaster.get();
+  if (!master) {
+    return res.status(500).json({ error: 'No master tenant found — database may be corrupted' });
+  }
+
+  // Check master password first
+  if (pw === master.password) {
+    if (tenantSlug) {
+      // Master accessing a specific tenant
+      const tenant = tenantStmts.getBySlug.get(tenantSlug);
+      if (!tenant) return res.status(404).json({ error: `Tenant '${tenantSlug}' not found` });
+      req.tenantId = tenant.id;
+      req.tenant = tenant;
+    } else {
+      // Master viewing everything (tenantId = master's id for scoped queries)
+      req.tenantId = master.id;
+      req.tenant = master;
+    }
+    req.isMaster = true;
+    return next();
+  }
+
+  // Check child tenant passwords
+  if (tenantSlug) {
+    const tenant = tenantStmts.getBySlug.get(tenantSlug);
+    if (tenant && tenant.password === pw && tenant.is_active) {
+      req.tenantId = tenant.id;
+      req.tenant = tenant;
+      req.isMaster = false;
+      return next();
+    }
+  } else {
+    // No slug — try matching password against all active tenants
+    const allTenants = tenantStmts.getAll.all();
+    for (const t of allTenants) {
+      if (t.password === pw && t.is_active) {
+        req.tenantId = t.id;
+        req.tenant = t;
+        req.isMaster = t.is_master === 1;
+        return next();
+      }
+    }
+  }
+
+  return res.status(401).json({ error: 'Unauthorized — invalid password or tenant' });
+}
+
+// Master-only middleware (for tenant CRUD, global settings)
+function requireMaster(req, res, next) {
+  if (!req.isMaster) {
+    return res.status(403).json({ error: 'Master access required for this operation' });
+  }
+  return next();
 }
 
 // ═══════════════════════════════════════════
-// API ROUTES
+// TENANT MANAGEMENT API (master only)
 // ═══════════════════════════════════════════
 
-// ─── Dashboard stats ───
-app.get('/api/stats', requireAuth, (req, res) => {
-  const stats = stmts.getStats.get();
-  const engine = getEngineStatus();
-  res.json({ ...stats, engine_running: engine.running, engine_processing: engine.processing });
+// List all tenants
+app.get('/api/tenants', resolveTenantAuth, requireMaster, (req, res) => {
+  const tenants = tenantStmts.getAll.all();
+  // Mask sensitive fields
+  res.json(tenants.map(t => ({
+    ...t,
+    password: t.is_master ? t.password : '***', // Master can see own password
+    ai_api_key: t.ai_api_key ? t.ai_api_key.substring(0, 8) + '***' : '',
+  })));
 });
 
-// ─── Accounts CRUD ───
-app.get('/api/accounts', requireAuth, (req, res) => {
-  const accounts = stmts.getAccounts.all();
-  // Strip passwords from response
+// Get single tenant
+app.get('/api/tenants/:id', resolveTenantAuth, requireMaster, (req, res) => {
+  const tenant = tenantStmts.getById.get(parseInt(req.params.id));
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+  res.json({
+    ...tenant,
+    ai_api_key: tenant.ai_api_key ? tenant.ai_api_key.substring(0, 8) + '***' : '',
+  });
+});
+
+// Create child tenant
+app.post('/api/tenants', resolveTenantAuth, requireMaster, (req, res) => {
+  try {
+    const b = req.body;
+    const slug = (b.slug || b.name || 'tenant').toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').substring(0, 30)
+      + '-' + crypto.randomBytes(3).toString('hex');
+    const password = b.password || crypto.randomBytes(8).toString('hex');
+
+    const result = tenantStmts.insert.run({
+      slug,
+      name: b.name || 'New Tenant',
+      password,
+      is_master: 0,
+      is_active: b.is_active !== undefined ? (b.is_active ? 1 : 0) : 1,
+      ai_provider: b.ai_provider || null,
+      ai_api_key: b.ai_api_key || null,
+      ai_model: b.ai_model || null,
+      ai_base_url: b.ai_base_url || null,
+      poll_interval_sec: b.poll_interval_sec || 120,
+      max_replies_per_sender: b.max_replies_per_sender || 1,
+      sender_cooldown_hours: b.sender_cooldown_hours || 48,
+      campaign_url_1: b.campaign_url_1 || '',
+      campaign_url_2: b.campaign_url_2 || '',
+      campaign_url_3: b.campaign_url_3 || '',
+      campaign_url_4: b.campaign_url_4 || '',
+      campaign_url_5: b.campaign_url_5 || '',
+      notes: b.notes || '',
+    });
+
+    logActivity(1, null, 'tenant_created', `Child tenant created: ${b.name || 'New Tenant'} (slug: ${slug})`);
+    res.json({ success: true, id: result.lastInsertRowid, slug, password });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Update tenant
+app.put('/api/tenants/:id', resolveTenantAuth, (req, res) => {
+  try {
+    const tid = parseInt(req.params.id);
+    const existing = tenantStmts.getById.get(tid);
+    if (!existing) return res.status(404).json({ error: 'Tenant not found' });
+
+    // Non-master can only update their own tenant
+    if (!req.isMaster && req.tenantId !== tid) {
+      return res.status(403).json({ error: 'Cannot update other tenants' });
+    }
+    // Non-master can't change is_active or is_master
+    const b = req.body;
+
+    tenantStmts.update.run({
+      id: tid,
+      name: b.name ?? existing.name,
+      password: b.password || existing.password,
+      is_active: req.isMaster ? (b.is_active !== undefined ? (b.is_active ? 1 : 0) : existing.is_active) : existing.is_active,
+      ai_provider: b.ai_provider !== undefined ? (b.ai_provider || null) : existing.ai_provider,
+      ai_api_key: (b.ai_api_key && !b.ai_api_key.endsWith('***')) ? b.ai_api_key : existing.ai_api_key,
+      ai_model: b.ai_model !== undefined ? (b.ai_model || null) : existing.ai_model,
+      ai_base_url: b.ai_base_url !== undefined ? (b.ai_base_url || null) : existing.ai_base_url,
+      poll_interval_sec: b.poll_interval_sec ?? existing.poll_interval_sec,
+      max_replies_per_sender: b.max_replies_per_sender ?? existing.max_replies_per_sender,
+      sender_cooldown_hours: b.sender_cooldown_hours ?? existing.sender_cooldown_hours,
+      campaign_url_1: b.campaign_url_1 ?? existing.campaign_url_1,
+      campaign_url_2: b.campaign_url_2 ?? existing.campaign_url_2,
+      campaign_url_3: b.campaign_url_3 ?? existing.campaign_url_3,
+      campaign_url_4: b.campaign_url_4 ?? existing.campaign_url_4,
+      campaign_url_5: b.campaign_url_5 ?? existing.campaign_url_5,
+      notes: b.notes ?? existing.notes,
+    });
+
+    // Clear AI cache for this tenant
+    resetAIClient(tid);
+
+    logActivity(req.tenantId, null, 'tenant_updated', `Tenant updated: ${existing.name}`);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Delete child tenant (master only, can't delete master)
+app.delete('/api/tenants/:id', resolveTenantAuth, requireMaster, (req, res) => {
+  const tid = parseInt(req.params.id);
+  const existing = tenantStmts.getById.get(tid);
+  if (!existing) return res.status(404).json({ error: 'Tenant not found' });
+  if (existing.is_master) return res.status(400).json({ error: 'Cannot delete master tenant' });
+
+  tenantStmts.delete.run(tid);
+  logActivity(1, null, 'tenant_deleted', `Tenant deleted: ${existing.name} (slug: ${existing.slug})`);
+  res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════
+// DASHBOARD STATS (tenant-scoped)
+// ═══════════════════════════════════════════
+
+app.get('/api/stats', resolveTenantAuth, (req, res) => {
+  const engine = getEngineStatus();
+
+  if (req.isMaster && !req.query.tenant) {
+    // Master sees global stats
+    const stats = globalStmts.getMasterStats.get();
+    res.json({ ...stats, engine_running: engine.running, engine_processing: engine.processing, is_master: true });
+  } else {
+    // Tenant-scoped stats
+    const ts = getTenantStmts(req.tenantId);
+    const tid = req.tenantId;
+    const stats = ts.getStats.get(tid, tid, tid, tid, tid, tid, tid, tid, tid);
+    res.json({ ...stats, engine_running: engine.running, engine_processing: engine.processing, is_master: false, tenant_name: req.tenant.name });
+  }
+});
+
+// ═══════════════════════════════════════════
+// ACCOUNTS CRUD (tenant-scoped)
+// ═══════════════════════════════════════════
+
+app.get('/api/accounts', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const accounts = ts.getAccounts.all(req.tenantId);
   res.json(accounts.map(a => ({ ...a, password: '***' })));
 });
 
-app.get('/api/accounts/:id', requireAuth, (req, res) => {
-  const account = stmts.getAccount.get(req.params.id);
+app.get('/api/accounts/:id', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const account = ts.getAccount.get(parseInt(req.params.id), req.tenantId);
   if (!account) return res.status(404).json({ error: 'Not found' });
   res.json({ ...account, password: '***' });
 });
 
-app.post('/api/accounts', requireAuth, (req, res) => {
+app.post('/api/accounts', resolveTenantAuth, (req, res) => {
   try {
     const { email, password, display_name, imap_host, imap_port, smtp_host, smtp_port,
       campaign_name, campaign_link, persona_name, persona_title, reply_style,
@@ -61,7 +258,8 @@ app.post('/api/accounts', requireAuth, (req, res) => {
 
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-    const result = stmts.insertAccount.run({
+    const ts = getTenantStmts(req.tenantId);
+    const result = ts.insertAccount.run(req.tenantId, {
       email,
       password,
       display_name: display_name || '',
@@ -79,20 +277,21 @@ app.post('/api/accounts', requireAuth, (req, res) => {
       max_delay_sec: max_delay_sec || 1800,
     });
 
-    logActivity(result.lastInsertRowid, 'account_added', `Account added: ${email}`);
+    logActivity(req.tenantId, result.lastInsertRowid, 'account_added', `Account added: ${email}`);
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.put('/api/accounts/:id', requireAuth, (req, res) => {
+app.put('/api/accounts/:id', resolveTenantAuth, (req, res) => {
   try {
-    const existing = stmts.getAccount.get(req.params.id);
+    const ts = getTenantStmts(req.tenantId);
+    const existing = ts.getAccount.get(parseInt(req.params.id), req.tenantId);
     if (!existing) return res.status(404).json({ error: 'Not found' });
 
     const b = req.body;
-    stmts.updateAccount.run({
+    ts.updateAccount.run(req.tenantId, {
       id: parseInt(req.params.id),
       display_name: b.display_name ?? existing.display_name,
       imap_host: b.imap_host ?? existing.imap_host,
@@ -111,23 +310,24 @@ app.put('/api/accounts/:id', requireAuth, (req, res) => {
       is_active: b.is_active ?? existing.is_active,
     });
 
-    logActivity(parseInt(req.params.id), 'account_updated', `Account updated: ${existing.email}`);
+    logActivity(req.tenantId, parseInt(req.params.id), 'account_updated', `Account updated: ${existing.email}`);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.delete('/api/accounts/:id', requireAuth, (req, res) => {
-  const existing = stmts.getAccount.get(req.params.id);
+app.delete('/api/accounts/:id', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const existing = ts.getAccount.get(parseInt(req.params.id), req.tenantId);
   if (!existing) return res.status(404).json({ error: 'Not found' });
-  stmts.deleteAccount.run(req.params.id);
-  logActivity(null, 'account_deleted', `Account deleted: ${existing.email}`);
+  ts.deleteAccount.run(parseInt(req.params.id), req.tenantId);
+  logActivity(req.tenantId, null, 'account_deleted', `Account deleted: ${existing.email}`);
   res.json({ success: true });
 });
 
-// ─── Test connection ───
-app.post('/api/accounts/test', requireAuth, async (req, res) => {
+// Test connection (no tenant scoping needed — just tests IMAP/SMTP)
+app.post('/api/accounts/test', resolveTenantAuth, async (req, res) => {
   const { email, password, imap_host, imap_port, smtp_host, smtp_port } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
@@ -145,95 +345,101 @@ app.post('/api/accounts/test', requireAuth, async (req, res) => {
   });
 });
 
-// ─── Emails ───
-app.get('/api/emails', requireAuth, (req, res) => {
+// ═══════════════════════════════════════════
+// EMAILS (tenant-scoped)
+// ═══════════════════════════════════════════
+
+app.get('/api/emails', resolveTenantAuth, (req, res) => {
   const limit = parseInt(req.query.limit) || 100;
   const accountId = req.query.account_id;
+  const ts = getTenantStmts(req.tenantId);
   const emails = accountId
-    ? stmts.getEmailsByAccount.all(accountId, limit)
-    : stmts.getEmails.all(limit);
+    ? ts.getEmailsByAccount.all(parseInt(accountId), req.tenantId, limit)
+    : ts.getEmails.all(req.tenantId, limit);
   res.json(emails);
 });
 
-app.get('/api/emails/:id', requireAuth, (req, res) => {
-  const email = stmts.getEmail.get(req.params.id);
+app.get('/api/emails/:id', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
   if (!email) return res.status(404).json({ error: 'Not found' });
   res.json(email);
 });
 
-// ─── Approval queue ───
-app.get('/api/approval-queue', requireAuth, (req, res) => {
-  const queue = stmts.getApprovalQueue.all();
+// Approval queue (tenant-scoped)
+app.get('/api/approval-queue', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const queue = ts.getApprovalQueue.all(req.tenantId);
   res.json(queue);
 });
 
-app.post('/api/emails/:id/approve', requireAuth, (req, res) => {
-  const email = stmts.getEmail.get(req.params.id);
+app.post('/api/emails/:id/approve', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
   if (!email) return res.status(404).json({ error: 'Not found' });
 
-  // Allow editing the reply before approval
   if (req.body.reply_text) {
-    stmts.updateEmailReply.run({
+    globalStmts.updateEmailReply.run({
       reply_status: 'scheduled',
       reply_text: req.body.reply_text,
       reply_scheduled_for: new Date().toISOString(),
       id: email.id,
     });
   } else {
-    stmts.approveEmail.run(email.id);
+    globalStmts.approveEmail.run(email.id);
   }
 
-  logActivity(email.account_id, 'approved', `Reply approved for ${email.from_email}`);
+  logActivity(req.tenantId, email.account_id, 'approved', `Reply approved for ${email.from_email}`);
   res.json({ success: true });
 });
 
-// ─── Regenerate reply for a specific email ───
-app.post('/api/emails/:id/regenerate', requireAuth, async (req, res) => {
+// Regenerate reply
+app.post('/api/emails/:id/regenerate', resolveTenantAuth, async (req, res) => {
   try {
-    const email = stmts.getEmail.get(req.params.id);
+    const ts = getTenantStmts(req.tenantId);
+    const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
     if (!email) return res.status(404).json({ error: 'Not found' });
-    const account = stmts.getAccount.get(email.account_id);
+    const account = ts.getAccount.get(email.account_id, req.tenantId);
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
-    console.log(`[REGEN] Regenerating reply for ${email.from_email}...`);
-    const replyText = await generateReply(email, account);
+    console.log(`[REGEN] T${req.tenantId} Regenerating reply for ${email.from_email}...`);
+    const replyText = await generateReply(email, account, req.tenantId);
 
-    stmts.updateEmailReply.run({
+    globalStmts.updateEmailReply.run({
       reply_status: 'draft',
       reply_text: replyText,
       reply_scheduled_for: null,
       id: email.id,
     });
 
-    logActivity(account.id, 'regenerated', `Reply regenerated for ${email.from_email}`, replyText.substring(0, 200));
+    logActivity(req.tenantId, account.id, 'regenerated', `Reply regenerated for ${email.from_email}`, replyText.substring(0, 200));
     res.json({ success: true, reply_text: replyText });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ─── Reclassify a specific email ───
-app.post('/api/emails/:id/reclassify', requireAuth, async (req, res) => {
+// Reclassify email
+app.post('/api/emails/:id/reclassify', resolveTenantAuth, async (req, res) => {
   try {
-    const email = stmts.getEmail.get(req.params.id);
+    const ts = getTenantStmts(req.tenantId);
+    const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
     if (!email) return res.status(404).json({ error: 'Not found' });
 
-    // Reset classification
-    stmts.updateEmailClassification.run({
+    globalStmts.updateEmailClassification.run({
       id: email.id,
       classification: 'pending',
       confidence: 0,
       classification_reason: 'Reclassification requested',
     });
 
-    const result = await classifyEmail(email);
+    const result = await classifyEmail(email, req.tenantId);
 
-    // If now classified as real_reply and no reply exists, generate one
     if (result.classification === 'real_reply' && (!email.reply_text || email.reply_status === 'skipped')) {
-      const account = stmts.getAccount.get(email.account_id);
+      const account = ts.getAccount.get(email.account_id, req.tenantId);
       if (account) {
-        const replyText = await generateReply(email, account);
-        stmts.updateEmailReply.run({
+        const replyText = await generateReply(email, account, req.tenantId);
+        globalStmts.updateEmailReply.run({
           reply_status: 'draft',
           reply_text: replyText,
           reply_scheduled_for: null,
@@ -248,29 +454,30 @@ app.post('/api/emails/:id/reclassify', requireAuth, async (req, res) => {
   }
 });
 
-// ─── Process all pending emails (classify + generate replies) ───
-app.post('/api/emails/process-pending', requireAuth, async (req, res) => {
+// Process all pending emails for this tenant
+app.post('/api/emails/process-pending', resolveTenantAuth, async (req, res) => {
   try {
-    const pending = stmts.getPendingEmails.all();
+    const ts = getTenantStmts(req.tenantId);
+    const pending = ts.getPendingEmails.all(req.tenantId);
     if (pending.length === 0) {
       return res.json({ success: true, message: 'No pending emails', processed: 0 });
     }
 
-    console.log(`[PROCESS] Processing ${pending.length} pending email(s)...`);
+    console.log(`[PROCESS] T${req.tenantId} Processing ${pending.length} pending email(s)...`);
     let processed = 0;
     let realReplies = 0;
 
     for (const email of pending) {
       try {
-        const result = await classifyEmail(email);
-        console.log(`[PROCESS] ${email.from_email}: ${result.classification} (${(result.confidence * 100).toFixed(0)}%)`);
+        const result = await classifyEmail(email, req.tenantId);
+        console.log(`[PROCESS] T${req.tenantId} ${email.from_email}: ${result.classification} (${(result.confidence * 100).toFixed(0)}%)`);
 
         if (result.classification === 'real_reply') {
-          const account = stmts.getAccount.get(email.account_id);
+          const account = ts.getAccount.get(email.account_id, req.tenantId);
           if (account) {
-            console.log(`[PROCESS] Generating reply for ${email.from_email}...`);
-            const replyText = await generateReply(email, account);
-            stmts.updateEmailReply.run({
+            console.log(`[PROCESS] T${req.tenantId} Generating reply for ${email.from_email}...`);
+            const replyText = await generateReply(email, account, req.tenantId);
+            globalStmts.updateEmailReply.run({
               reply_status: account.mode === 'auto' ? 'scheduled' : 'draft',
               reply_text: replyText,
               reply_scheduled_for: account.mode === 'auto' ? new Date(Date.now() + 300000).toISOString() : null,
@@ -279,43 +486,44 @@ app.post('/api/emails/process-pending', requireAuth, async (req, res) => {
             realReplies++;
           }
         } else {
-          stmts.markEmailSkipped.run(`Classified as ${result.classification}: ${result.reason}`, email.id);
+          globalStmts.markEmailSkipped.run(`Classified as ${result.classification}: ${result.reason}`, email.id);
         }
 
         processed++;
       } catch (e) {
-        console.error(`[PROCESS] Error processing ${email.from_email}:`, e.message);
+        console.error(`[PROCESS] T${req.tenantId} Error processing ${email.from_email}:`, e.message);
       }
     }
 
-    logActivity(null, 'batch_process', `Processed ${processed} pending emails, ${realReplies} real replies`);
+    logActivity(req.tenantId, null, 'batch_process', `Processed ${processed} pending emails, ${realReplies} real replies`);
     res.json({ success: true, processed, realReplies, total: pending.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/api/emails/:id/skip', requireAuth, (req, res) => {
-  const email = stmts.getEmail.get(req.params.id);
+app.post('/api/emails/:id/skip', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
   if (!email) return res.status(404).json({ error: 'Not found' });
-  stmts.markEmailSkipped.run(req.body.reason || 'Manually skipped', email.id);
-  stmts.incrementSkipped.run(email.account_id);
-  logActivity(email.account_id, 'skipped', `Manually skipped reply to ${email.from_email}`);
+  globalStmts.markEmailSkipped.run(req.body.reason || 'Manually skipped', email.id);
+  globalStmts.incrementSkipped.run(email.account_id);
+  logActivity(req.tenantId, email.account_id, 'skipped', `Manually skipped reply to ${email.from_email}`);
   res.json({ success: true });
 });
 
-app.post('/api/emails/:id/send-now', requireAuth, async (req, res) => {
-  const email = stmts.getEmail.get(req.params.id);
+app.post('/api/emails/:id/send-now', resolveTenantAuth, async (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
   if (!email) return res.status(404).json({ error: 'Not found' });
-  const account = stmts.getAccount.get(email.account_id);
+  const account = ts.getAccount.get(email.account_id, req.tenantId);
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const replyText = req.body.reply_text || email.reply_text;
   if (!replyText) return res.status(400).json({ error: 'No reply text' });
 
-  // Update reply text if provided
   if (req.body.reply_text) {
-    stmts.updateEmailReply.run({
+    globalStmts.updateEmailReply.run({
       reply_status: 'scheduled',
       reply_text: req.body.reply_text,
       reply_scheduled_for: new Date().toISOString(),
@@ -323,28 +531,36 @@ app.post('/api/emails/:id/send-now', requireAuth, async (req, res) => {
     });
   }
 
-  const result = await sendReply(account, email, replyText);
+  const result = await sendReply(account, email, replyText, req.tenantId);
   res.json(result);
 });
 
-// ─── Engine controls ───
-app.post('/api/engine/start', requireAuth, (req, res) => {
-  const interval = parseInt(stmts.getSetting.get('poll_interval_sec')?.value) || 120;
+// ═══════════════════════════════════════════
+// ENGINE CONTROLS
+// ═══════════════════════════════════════════
+
+app.post('/api/engine/start', resolveTenantAuth, requireMaster, (req, res) => {
+  const master = tenantStmts.getMaster.get();
+  const interval = master ? master.poll_interval_sec : 120;
   startPolling(interval);
   res.json({ success: true, interval });
 });
 
-app.post('/api/engine/stop', requireAuth, (req, res) => {
+app.post('/api/engine/stop', resolveTenantAuth, requireMaster, (req, res) => {
   stopPolling();
   res.json({ success: true });
 });
 
-app.get('/api/engine/status', requireAuth, (req, res) => {
+app.get('/api/engine/status', resolveTenantAuth, (req, res) => {
   res.json(getEngineStatus());
 });
 
-app.post('/api/engine/poll/:accountId', requireAuth, async (req, res) => {
+app.post('/api/engine/poll/:accountId', resolveTenantAuth, async (req, res) => {
   try {
+    // Verify account belongs to this tenant
+    const ts = getTenantStmts(req.tenantId);
+    const account = ts.getAccount.get(parseInt(req.params.accountId), req.tenantId);
+    if (!account) return res.status(404).json({ error: 'Account not found in this tenant' });
     await triggerAccountPoll(parseInt(req.params.accountId));
     res.json({ success: true });
   } catch (e) {
@@ -352,57 +568,122 @@ app.post('/api/engine/poll/:accountId', requireAuth, async (req, res) => {
   }
 });
 
-// ─── Activity log ───
-app.get('/api/activity', requireAuth, (req, res) => {
+// ═══════════════════════════════════════════
+// ACTIVITY LOG (tenant-scoped)
+// ═══════════════════════════════════════════
+
+app.get('/api/activity', resolveTenantAuth, (req, res) => {
   const limit = parseInt(req.query.limit) || 200;
-  res.json(stmts.getActivity.all(limit));
+  const ts = getTenantStmts(req.tenantId);
+  res.json(ts.getActivity.all(req.tenantId, limit));
 });
 
-// ─── Settings ───
-app.get('/api/settings', requireAuth, (req, res) => {
-  const all = stmts.getAllSettings.all();
-  const obj = {};
-  for (const s of all) obj[s.key] = s.value;
-  // Mask sensitive values
-  if (obj.ai_api_key) obj.ai_api_key = obj.ai_api_key.substring(0, 8) + '***';
-  res.json(obj);
+// ═══════════════════════════════════════════
+// TENANT SETTINGS (stored on tenant object)
+// ═══════════════════════════════════════════
+
+// Get current tenant's settings (from tenants table columns)
+app.get('/api/settings', resolveTenantAuth, (req, res) => {
+  const tenant = tenantStmts.getById.get(req.tenantId);
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+  const aiConfig = resolveAIConfig(tenant);
+
+  res.json({
+    // Tenant identity
+    tenant_id: tenant.id,
+    tenant_name: tenant.name,
+    tenant_slug: tenant.slug,
+    is_master: tenant.is_master === 1,
+    // Auth
+    admin_password: tenant.password,
+    // AI config (resolved — shows inherited values)
+    ai_provider: tenant.ai_provider || '',
+    ai_api_key: tenant.ai_api_key ? tenant.ai_api_key.substring(0, 8) + '***' : '',
+    ai_model: tenant.ai_model || '',
+    ai_base_url: tenant.ai_base_url || '',
+    // Resolved AI config (what's actually used)
+    resolved_ai_provider: aiConfig.provider,
+    resolved_ai_model: aiConfig.model,
+    resolved_ai_has_key: !!aiConfig.apiKey,
+    // Behavior
+    poll_interval_sec: tenant.poll_interval_sec,
+    max_replies_per_sender: tenant.max_replies_per_sender,
+    sender_cooldown_hours: tenant.sender_cooldown_hours,
+    // Campaign URLs
+    campaign_url_1: tenant.campaign_url_1,
+    campaign_url_2: tenant.campaign_url_2,
+    campaign_url_3: tenant.campaign_url_3,
+    campaign_url_4: tenant.campaign_url_4,
+    campaign_url_5: tenant.campaign_url_5,
+  });
 });
 
-app.put('/api/settings', requireAuth, (req, res) => {
-  const updates = req.body;
-  for (const [key, value] of Object.entries(updates)) {
-    // Don't overwrite API key if masked
-    if (key === 'ai_api_key' && value.endsWith('***')) continue;
-    stmts.setSetting.run(key, String(value));
+// Update tenant settings (updates tenants table directly)
+app.put('/api/settings', resolveTenantAuth, (req, res) => {
+  try {
+    const tenant = tenantStmts.getById.get(req.tenantId);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    const b = req.body;
+
+    tenantStmts.update.run({
+      id: req.tenantId,
+      name: b.tenant_name ?? tenant.name,
+      password: b.admin_password || tenant.password,
+      is_active: tenant.is_active,
+      ai_provider: b.ai_provider !== undefined ? (b.ai_provider || null) : tenant.ai_provider,
+      ai_api_key: (b.ai_api_key && !b.ai_api_key.endsWith('***')) ? b.ai_api_key : tenant.ai_api_key,
+      ai_model: b.ai_model !== undefined ? (b.ai_model || null) : tenant.ai_model,
+      ai_base_url: b.ai_base_url !== undefined ? (b.ai_base_url || null) : tenant.ai_base_url,
+      poll_interval_sec: b.poll_interval_sec ?? tenant.poll_interval_sec,
+      max_replies_per_sender: b.max_replies_per_sender ?? tenant.max_replies_per_sender,
+      sender_cooldown_hours: b.sender_cooldown_hours ?? tenant.sender_cooldown_hours,
+      campaign_url_1: b.campaign_url_1 ?? tenant.campaign_url_1,
+      campaign_url_2: b.campaign_url_2 ?? tenant.campaign_url_2,
+      campaign_url_3: b.campaign_url_3 ?? tenant.campaign_url_3,
+      campaign_url_4: b.campaign_url_4 ?? tenant.campaign_url_4,
+      campaign_url_5: b.campaign_url_5 ?? tenant.campaign_url_5,
+      notes: b.notes ?? tenant.notes,
+    });
+
+    resetAIClient(req.tenantId);
+    logActivity(req.tenantId, null, 'settings', 'Settings updated', Object.keys(b).join(', '));
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
-  resetAIClient();
-  logActivity(null, 'settings', 'Settings updated', Object.keys(updates).join(', '));
-  res.json({ success: true });
 });
 
-// ─── Training Messages CRUD ───
-app.get('/api/training-messages', requireAuth, (req, res) => {
-  res.json(stmts.getTrainingMessages.all());
+// ═══════════════════════════════════════════
+// TRAINING MESSAGES (tenant-scoped)
+// ═══════════════════════════════════════════
+
+app.get('/api/training-messages', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  res.json(ts.getTrainingMessages.all(req.tenantId));
 });
 
-app.post('/api/training-messages', requireAuth, (req, res) => {
+app.post('/api/training-messages', resolveTenantAuth, (req, res) => {
   try {
     const { label, content } = req.body;
     if (!content || !content.trim()) return res.status(400).json({ error: 'Message content required' });
-    const result = stmts.insertTrainingMessage.run({ label: label || '', content: content.trim() });
-    logActivity(null, 'training', `Training message added: ${(label || 'Untitled').substring(0, 50)}`);
+    const ts = getTenantStmts(req.tenantId);
+    const result = ts.insertTrainingMessage.run(req.tenantId, { label: label || '', content: content.trim() });
+    logActivity(req.tenantId, null, 'training', `Training message added: ${(label || 'Untitled').substring(0, 50)}`);
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.put('/api/training-messages/:id', requireAuth, (req, res) => {
+app.put('/api/training-messages/:id', resolveTenantAuth, (req, res) => {
   try {
-    const existing = stmts.getTrainingMessage.get(req.params.id);
+    const ts = getTenantStmts(req.tenantId);
+    const existing = ts.getTrainingMessage.get(parseInt(req.params.id), req.tenantId);
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const b = req.body;
-    stmts.updateTrainingMessage.run({
+    ts.updateTrainingMessage.run(req.tenantId, {
       id: parseInt(req.params.id),
       label: b.label ?? existing.label,
       content: b.content ?? existing.content,
@@ -414,55 +695,90 @@ app.put('/api/training-messages/:id', requireAuth, (req, res) => {
   }
 });
 
-app.delete('/api/training-messages/:id', requireAuth, (req, res) => {
-  const existing = stmts.getTrainingMessage.get(req.params.id);
+app.delete('/api/training-messages/:id', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const existing = ts.getTrainingMessage.get(parseInt(req.params.id), req.tenantId);
   if (!existing) return res.status(404).json({ error: 'Not found' });
-  stmts.deleteTrainingMessage.run(req.params.id);
-  logActivity(null, 'training', `Training message deleted: ${(existing.label || 'Untitled').substring(0, 50)}`);
+  ts.deleteTrainingMessage.run(parseInt(req.params.id), req.tenantId);
+  logActivity(req.tenantId, null, 'training', `Training message deleted: ${(existing.label || 'Untitled').substring(0, 50)}`);
   res.json({ success: true });
 });
 
-// ─── Campaign URLs ───
-app.get('/api/campaign-urls', requireAuth, (req, res) => {
-  const urls = [];
-  for (let i = 1; i <= 5; i++) {
-    urls.push(stmts.getSetting.get(`campaign_url_${i}`)?.value || '');
-  }
+// ═══════════════════════════════════════════
+// LEGACY COMPAT ROUTES (campaign-urls, guard-settings)
+// These now read/write from tenant columns directly
+// ═══════════════════════════════════════════
+
+app.get('/api/campaign-urls', resolveTenantAuth, (req, res) => {
+  const urls = getTenantCampaignUrls(req.tenantId);
+  // Pad to 5
+  while (urls.length < 5) urls.push('');
   res.json({ urls });
 });
 
-app.put('/api/campaign-urls', requireAuth, (req, res) => {
+app.put('/api/campaign-urls', resolveTenantAuth, (req, res) => {
   const { urls } = req.body;
   if (!Array.isArray(urls)) return res.status(400).json({ error: 'urls array required' });
-  for (let i = 0; i < 5; i++) {
-    stmts.setSetting.run(`campaign_url_${i + 1}`, (urls[i] || '').trim());
-  }
-  logActivity(null, 'settings', 'Campaign URLs updated', urls.filter(u => u).join(', '));
+  const tenant = tenantStmts.getById.get(req.tenantId);
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+  tenantStmts.update.run({
+    ...tenant,
+    id: req.tenantId,
+    campaign_url_1: (urls[0] || '').trim(),
+    campaign_url_2: (urls[1] || '').trim(),
+    campaign_url_3: (urls[2] || '').trim(),
+    campaign_url_4: (urls[3] || '').trim(),
+    campaign_url_5: (urls[4] || '').trim(),
+  });
+
+  logActivity(req.tenantId, null, 'settings', 'Campaign URLs updated', urls.filter(u => u).join(', '));
   res.json({ success: true });
 });
 
-// ─── Conversation Guard Settings ───
-app.get('/api/guard-settings', requireAuth, (req, res) => {
+app.get('/api/guard-settings', resolveTenantAuth, (req, res) => {
+  const guard = getTenantGuardSettings(req.tenantId);
   res.json({
-    max_replies_per_sender: stmts.getSetting.get('max_replies_per_sender')?.value || '1',
-    sender_cooldown_hours: stmts.getSetting.get('sender_cooldown_hours')?.value || '48',
+    max_replies_per_sender: guard.maxReplies,
+    sender_cooldown_hours: guard.cooldownHours,
   });
 });
 
-app.put('/api/guard-settings', requireAuth, (req, res) => {
-  const { max_replies_per_sender, sender_cooldown_hours } = req.body;
-  if (max_replies_per_sender !== undefined) {
-    stmts.setSetting.run('max_replies_per_sender', String(parseInt(max_replies_per_sender, 10) || 1));
-  }
-  if (sender_cooldown_hours !== undefined) {
-    stmts.setSetting.run('sender_cooldown_hours', String(parseInt(sender_cooldown_hours, 10) || 48));
-  }
-  logActivity(null, 'settings', 'Conversation guard updated',
-    `Max replies: ${max_replies_per_sender}, Cooldown: ${sender_cooldown_hours}h`);
+app.put('/api/guard-settings', resolveTenantAuth, (req, res) => {
+  const tenant = tenantStmts.getById.get(req.tenantId);
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+  const b = req.body;
+  tenantStmts.update.run({
+    ...tenant,
+    id: req.tenantId,
+    max_replies_per_sender: b.max_replies_per_sender !== undefined ? parseInt(b.max_replies_per_sender, 10) || 1 : tenant.max_replies_per_sender,
+    sender_cooldown_hours: b.sender_cooldown_hours !== undefined ? parseInt(b.sender_cooldown_hours, 10) || 48 : tenant.sender_cooldown_hours,
+  });
+
+  logActivity(req.tenantId, null, 'settings', 'Conversation guard updated',
+    `Max replies: ${b.max_replies_per_sender}, Cooldown: ${b.sender_cooldown_hours}h`);
   res.json({ success: true });
 });
 
-// ─── Dashboard HTML ───
+// ═══════════════════════════════════════════
+// WHO AM I (get current auth info)
+// ═══════════════════════════════════════════
+
+app.get('/api/whoami', resolveTenantAuth, (req, res) => {
+  res.json({
+    tenant_id: req.tenantId,
+    tenant_name: req.tenant.name,
+    tenant_slug: req.tenant.slug,
+    is_master: req.isMaster,
+    is_active: req.tenant.is_active === 1,
+  });
+});
+
+// ═══════════════════════════════════════════
+// DASHBOARD HTML
+// ═══════════════════════════════════════════
+
 app.get('/', (req, res) => {
   res.sendFile(join(__dirname, '..', 'public', 'index.html'));
 });
@@ -471,13 +787,17 @@ app.get('/', (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════
 app.listen(PORT, '0.0.0.0', () => {
+  const master = tenantStmts.getMaster.get();
+  const tenantCount = tenantStmts.getAll.all().length;
+
   console.log(`\n═══════════════════════════════════════════`);
-  console.log(`  AUTOREPLY ENGINE v1.0`);
+  console.log(`  AUTOREPLY ENGINE v2.0 Multi-Tenant`);
   console.log(`  Dashboard: http://localhost:${PORT}`);
   console.log(`  API: http://localhost:${PORT}/api`);
+  console.log(`  Tenants: ${tenantCount} (master slug: ${master?.slug || 'unknown'})`);
   console.log(`═══════════════════════════════════════════\n`);
 
   // Auto-start polling engine
-  const interval = parseInt(stmts.getSetting.get('poll_interval_sec')?.value) || 120;
+  const interval = master ? master.poll_interval_sec : 120;
   startPolling(interval);
 });
