@@ -162,12 +162,17 @@ export async function fetchNewEmails(account, tenantId = 1) {
 
 // ─── SMTP: Send organic threaded reply + IMAP post-send ───
 export async function sendReply(account, email, replyText, tenantId = 1) {
+  // Port 465 = implicit TLS (secure:true), Port 587/others = STARTTLS (secure:false)
+  const isImplicitTLS = account.smtp_port === 465;
   const transporter = nodemailer.createTransport({
     host: account.smtp_host,
     port: account.smtp_port,
-    secure: true,
+    secure: isImplicitTLS,
     auth: { user: account.email, pass: account.password },
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 60000,
   });
 
   let subject = email.subject || '';
@@ -387,19 +392,34 @@ export async function testImapConnection(host, port, email, password) {
   }
 }
 
-// ─── Test SMTP connection ───
+// ─── Test SMTP connection (tries configured port, then fallback) ───
 export async function testSmtpConnection(host, port, email, password) {
-  const transporter = nodemailer.createTransport({
-    host, port,
-    secure: true,
-    auth: { user: email, pass: password },
-    tls: { rejectUnauthorized: false },
-  });
+  const portsToTry = [port];
+  // Add fallback ports if not already in the list
+  if (port !== 587) portsToTry.push(587);
+  if (port !== 465) portsToTry.push(465);
 
-  try {
-    await transporter.verify();
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
+  for (const p of portsToTry) {
+    // Port 465 = implicit TLS (secure:true), Port 587/others = STARTTLS (secure:false)
+    const isImplicitTLS = p === 465;
+    const transporter = nodemailer.createTransport({
+      host, port: p,
+      secure: isImplicitTLS,
+      auth: { user: email, pass: password },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 15000,
+    });
+
+    try {
+      await transporter.verify();
+      return { success: true, port: p, tls: isImplicitTLS ? 'implicit' : 'starttls' };
+    } catch (error) {
+      console.log(`[SMTP] Test port ${p} (${isImplicitTLS ? 'implicit TLS' : 'STARTTLS'}) failed: ${error.message}`);
+      if (p === portsToTry[portsToTry.length - 1]) {
+        return { success: false, error: `All ports failed. Last error (port ${p}): ${error.message}` };
+      }
+    }
   }
 }
