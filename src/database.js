@@ -134,6 +134,9 @@ insertSetting.run('campaign_url_2', '');
 insertSetting.run('campaign_url_3', '');
 insertSetting.run('campaign_url_4', '');
 insertSetting.run('campaign_url_5', '');
+// Conversation guard — prevents duplicate/looping replies
+insertSetting.run('max_replies_per_sender', '1');
+insertSetting.run('sender_cooldown_hours', '48');
 // Migrate old settings if they exist
 const oldKey = db.prepare("SELECT value FROM settings WHERE key='openai_api_key'").get();
 if (oldKey?.value) {
@@ -210,6 +213,26 @@ const stmts = {
     UPDATE emails SET reply_status='skipped', classification_reason=? WHERE id=?
   `),
   approveEmail: db.prepare("UPDATE emails SET reply_status='scheduled', reply_scheduled_for=datetime('now') WHERE id=?"),
+
+  // Conversation guard — prevents duplicate/looping replies
+  countRepliesBySender: db.prepare(`
+    SELECT COUNT(*) as cnt FROM emails
+    WHERE account_id = ? AND from_email = ? COLLATE NOCASE
+      AND reply_status IN ('sent', 'draft', 'scheduled', 'approved')
+  `),
+  countRecentRepliesBySender: db.prepare(`
+    SELECT COUNT(*) as cnt FROM emails
+    WHERE account_id = ? AND from_email = ? COLLATE NOCASE
+      AND reply_status IN ('sent', 'draft', 'scheduled', 'approved')
+      AND created_at >= datetime('now', '-' || ? || ' hours')
+  `),
+  countRepliesByThread: db.prepare(`
+    SELECT COUNT(*) as cnt FROM emails
+    WHERE account_id = ? AND from_email = ? COLLATE NOCASE
+      AND reply_status IN ('sent', 'draft', 'scheduled', 'approved')
+      AND REPLACE(REPLACE(REPLACE(LOWER(subject), 're: ', ''), 'fw: ', ''), 'fwd: ', '') =
+          REPLACE(REPLACE(REPLACE(LOWER(?), 're: ', ''), 'fw: ', ''), 'fwd: ', '')
+  `),
 
   // Training messages
   getTrainingMessages: db.prepare('SELECT * FROM training_messages ORDER BY created_at DESC'),

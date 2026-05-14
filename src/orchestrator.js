@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // AUTOREPLY ENGINE — Orchestrator (Poll → Classify → Reply)
 // The main loop that ties everything together
+// v1.4: Smart conversation guard — prevents duplicate/looping replies
 // ═══════════════════════════════════════════════════════════════
 
 import { stmts, logActivity } from './database.js';
@@ -9,6 +10,59 @@ import { classifyEmail, generateReply } from './ai-classifier.js';
 
 let isRunning = false;
 let pollTimer = null;
+
+// ─── Conversation Guard: Smart duplicate/loop prevention ───
+// Checks 3 layers before allowing a reply:
+//   1. Max replies per sender (default: 1) — total across all time
+//   2. Cooldown period (default: 48h) — recent replies within window
+//   3. Thread matching — same conversation subject already has a reply
+function checkConversationGuard(email, account) {
+  try {
+    const maxReplies = parseInt(stmts.getSetting.get('max_replies_per_sender')?.value || '1', 10);
+    const cooldownHours = parseInt(stmts.getSetting.get('sender_cooldown_hours')?.value || '48', 10);
+
+    // Layer 1: Total reply count to this sender (across all time)
+    const totalReplies = stmts.countRepliesBySender.get(account.id, email.from_email);
+    if (totalReplies && totalReplies.cnt >= maxReplies) {
+      return {
+        blocked: true,
+        type: 'max_replies',
+        reason: `Already replied ${totalReplies.cnt}x to ${email.from_email} (max: ${maxReplies})`
+      };
+    }
+
+    // Layer 2: Recent replies within cooldown window
+    if (cooldownHours > 0) {
+      const recentReplies = stmts.countRecentRepliesBySender.get(account.id, email.from_email, String(cooldownHours));
+      if (recentReplies && recentReplies.cnt > 0) {
+        return {
+          blocked: true,
+          type: 'cooldown',
+          reason: `Replied to ${email.from_email} within last ${cooldownHours}h (${recentReplies.cnt} recent reply/replies)`
+        };
+      }
+    }
+
+    // Layer 3: Same conversation thread (subject match after stripping Re:/Fw: prefixes)
+    if (email.subject) {
+      const threadReplies = stmts.countRepliesByThread.get(account.id, email.from_email, email.subject);
+      if (threadReplies && threadReplies.cnt > 0) {
+        return {
+          blocked: true,
+          type: 'thread_duplicate',
+          reason: `Already replied to this thread "${email.subject}" from ${email.from_email}`
+        };
+      }
+    }
+
+    // All clear — allow reply
+    return { blocked: false };
+  } catch (err) {
+    // If guard check fails, log warning but DON'T block — fail open
+    console.warn(`[GUARD] Error checking conversation guard: ${err.message}`);
+    return { blocked: false };
+  }
+}
 
 // ─── Process a single account ───
 async function processAccount(account) {
@@ -42,6 +96,18 @@ async function processAccount(account) {
         stmts.markEmailSkipped.run(`Classified as ${result.classification}: ${result.reason}`, email.id);
         stmts.incrementSkipped.run(account.id);
         logActivity(account.id, 'skipped', `Skipped ${email.from_email} — ${result.classification}`, result.reason);
+        continue;
+      }
+
+      // ─── Step 2.5: Conversation Guard — prevent duplicate/looping replies ───
+      const guardResult = checkConversationGuard(email, account);
+      if (guardResult.blocked) {
+        console.log(`[GUARD] ⛔ Blocked reply to ${email.from_email}: ${guardResult.reason}`);
+        stmts.markEmailSkipped.run(`Conversation guard: ${guardResult.reason}`, email.id);
+        stmts.incrementSkipped.run(account.id);
+        logActivity(account.id, 'skipped',
+          `Guard blocked ${email.from_email} — ${guardResult.reason}`,
+          `Subject: ${email.subject} | Type: ${guardResult.type}`);
         continue;
       }
 

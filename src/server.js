@@ -441,6 +441,27 @@ app.put('/api/campaign-urls', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── Conversation Guard Settings ───
+app.get('/api/guard-settings', requireAuth, (req, res) => {
+  res.json({
+    max_replies_per_sender: stmts.getSetting.get('max_replies_per_sender')?.value || '1',
+    sender_cooldown_hours: stmts.getSetting.get('sender_cooldown_hours')?.value || '48',
+  });
+});
+
+app.put('/api/guard-settings', requireAuth, (req, res) => {
+  const { max_replies_per_sender, sender_cooldown_hours } = req.body;
+  if (max_replies_per_sender !== undefined) {
+    stmts.setSetting.run('max_replies_per_sender', String(parseInt(max_replies_per_sender, 10) || 1));
+  }
+  if (sender_cooldown_hours !== undefined) {
+    stmts.setSetting.run('sender_cooldown_hours', String(parseInt(sender_cooldown_hours, 10) || 48));
+  }
+  logActivity(null, 'settings', 'Conversation guard updated',
+    `Max replies: ${max_replies_per_sender}, Cooldown: ${sender_cooldown_hours}h`);
+  res.json({ success: true });
+});
+
 // ─── Dashboard HTML ───
 app.get('/', (req, res) => {
   res.sendFile(join(__dirname, '..', 'public', 'index.html'));

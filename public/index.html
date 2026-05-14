@@ -274,6 +274,25 @@
             </div>
           </div>
           <div class="card">
+            <h3><i class="fas fa-shield-alt"></i> Conversation Guard</h3>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:12px">
+              <i class="fas fa-info-circle" style="color:var(--accent)"></i>
+              Prevents reply loops. When someone replies back to your auto-reply, the system checks these rules before generating another reply.
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="form-group">
+                <label>Max Replies Per Sender</label>
+                <input class="form-input" id="setMaxReplies" type="number" min="1" max="10" value="1">
+                <div style="font-size:10px;color:var(--text3);margin-top:3px">How many auto-replies one sender gets (total). Set to 1 for one-and-done.</div>
+              </div>
+              <div class="form-group">
+                <label>Cooldown Period (hours)</label>
+                <input class="form-input" id="setCooldownHours" type="number" min="0" max="720" value="48">
+                <div style="font-size:10px;color:var(--text3);margin-top:3px">Block repeat replies within this window. 0 = no time limit (use max count only).</div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
             <h3><i class="fas fa-link"></i> Campaign URL Rotation</h3>
             <div style="font-size:11px;color:var(--text3);margin-bottom:12px">
               Enter up to 5 campaign URLs. The system will randomly pick one for each reply. Leave empty slots blank.
@@ -924,7 +943,17 @@
         document.getElementById('setPollInterval').value = s.poll_interval_sec || '120';
         // Load campaign URLs
         loadCampaignUrls();
+        // Load conversation guard settings
+        loadGuardSettings();
       } catch(e) {}
+    }
+
+    async function loadGuardSettings() {
+      try {
+        const g = await fetch(API('/guard-settings')).then(r => r.json());
+        document.getElementById('setMaxReplies').value = g.max_replies_per_sender || '1';
+        document.getElementById('setCooldownHours').value = g.sender_cooldown_hours || '48';
+      } catch(e) { console.error('Guard settings load error:', e); }
     }
 
     async function loadCampaignUrls() {
@@ -958,7 +987,12 @@
           urls.push(el ? el.value.trim() : '');
         }
         await fetch(API('/campaign-urls'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ urls }) });
-        if (r.success) toast('Settings & campaign URLs saved', 'success');
+        // Save conversation guard settings
+        await fetch(API('/guard-settings'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+          max_replies_per_sender: document.getElementById('setMaxReplies').value,
+          sender_cooldown_hours: document.getElementById('setCooldownHours').value,
+        }) });
+        if (r.success) toast('All settings saved', 'success');
         else toast(r.error || 'Failed', 'error');
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
