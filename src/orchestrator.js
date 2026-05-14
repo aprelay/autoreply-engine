@@ -176,6 +176,7 @@ async function sendScheduledReplies() {
     };
     const email = {
       id: row.id,
+      uid: row.uid,
       from_email: row.from_email,
       from_name: row.from_name,
       subject: row.subject,
