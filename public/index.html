@@ -1297,7 +1297,7 @@
     // ─── Skipped Emails Review ───
     async function loadSkippedEmails() {
       try {
-        const url = API('/skipped-emails?limit=200' + (selectedAccountId ? `&account_id=${selectedAccountId}` : ''));
+        const url = API('/skipped-emails?limit=1000' + (selectedAccountId ? `&account_id=${selectedAccountId}` : ''));
         const emails = await fetch(url).then(r => r.json());
         document.getElementById('skippedInfo').textContent = `${emails.length} skipped email(s)`;
         // Update nav badge
