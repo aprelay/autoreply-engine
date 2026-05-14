@@ -387,7 +387,7 @@ app.get('/api/emails/:id', resolveTenantAuth, (req, res) => {
 app.get('/api/skipped-emails', resolveTenantAuth, (req, res) => {
   const ts = getTenantStmts(req.tenantId);
   const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
-  const limit = parseInt(req.query.limit) || 200;
+  const limit = parseInt(req.query.limit) || 1000;
   const emails = accountId
     ? ts.getSkippedEmailsByAccount.all(req.tenantId, accountId, limit)
     : ts.getSkippedEmails.all(req.tenantId, limit);
