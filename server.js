@@ -682,6 +682,8 @@ async function runCampaign(campaignId) {
   const subRot = settings.subjectRotation || {}; const rotSubjects = subRot.enabled && subRot.subjects?.length ? subRot.subjects : null; let subRotIdx = 0;
   function getSubject(recipient, fromEmail, fromName) { const baseSub = rotSubjects ? rotSubjects[subRotIdx++ % rotSubjects.length] : (camp.subject || ''); return baseSub ? renderTpl(baseSub, recipient, fromEmail, fromName, settings) : ''; }
   let baseHtml = camp.html_content || '';
+  let basePlainText = '';
+  try { const parsed = JSON.parse(camp.results || '{}'); basePlainText = parsed.plainTextBody || ''; } catch {}
   if (camp.template_name) { const activeAcct = settings.accountRotation?.enabled ? getNextRotationAccount(settings) : getActiveAccount(); if (activeAcct) { const tpl = db.prepare('SELECT content FROM templates WHERE account_id=? AND name=?').get(activeAcct.id, camp.template_name); if (tpl) baseHtml = tpl.content; } }
   try {
     if (sm.includes('bcc')) {
@@ -695,11 +697,12 @@ async function runCampaign(campaignId) {
         const pr = settings.bccPrimaryRecipient || batch[0];
         let html = baseHtml ? renderTpl(baseHtml, pr, account.email, camp.sender_name || account.name, settings) : '';
         if (html) { html = addFooter(html, settings.footer, settings); html = spamBypass(html, settings.spamBypass); html = varyContent(html); }
+        let plainText = basePlainText ? renderTpl(basePlainText, pr, account.email, camp.sender_name || account.name, settings) : '';
         const subj = getSubject(pr, account.email, camp.sender_name || account.name);
         let retries = 0;
         while (retries <= (eh.retryFailed ? eh.maxRetries : 0)) {
           try {
-            const hdrs = getVariedHeaders(af); const sendResult = await smartSend(account.refresh_token, { recipients: [pr], bcc: batch, subject: subj, htmlContent: html || undefined, senderName: camp.sender_name, replyTo: camp.reply_to, replyToName: camp.reply_to_name || settings.replyToName, headers: hdrs, saveToSent: settings.saveToSent }, account.email, camp.provider || settings.sendProvider, account.id);
+            const hdrs = getVariedHeaders(af); const sendResult = await smartSend(account.refresh_token, { recipients: [pr], bcc: batch, subject: subj, htmlContent: html || undefined, textContent: plainText || undefined, senderName: camp.sender_name, replyTo: camp.reply_to, replyToName: camp.reply_to_name || settings.replyToName, headers: hdrs, saveToSent: settings.saveToSent }, account.email, camp.provider || settings.sendProvider, account.id);
             sent += batch.length; results.push({ batch: `${i + 1}-${Math.min(i + bs, recipients.length)}`, success: true, count: batch.length, account: account.email, provider: sendResult?.provider || camp.provider || settings.sendProvider, timestamp: new Date().toISOString() });
             for (let x = 0; x < batch.length; x++) recordSend();
             db.prepare("UPDATE accounts SET send_count=send_count+?,last_used=datetime('now') WHERE id=?").run(batch.length, account.id);
@@ -723,11 +726,12 @@ async function runCampaign(campaignId) {
         while (!canSend(settings)) await new Promise(w => setTimeout(w, 1000));
         let html = baseHtml ? renderTpl(baseHtml, rec, account.email, camp.sender_name || account.name, settings) : '';
         if (html) { html = addFooter(html, settings.footer, settings); html = spamBypass(html, settings.spamBypass); html = varyContent(html); }
+        let plainText = basePlainText ? renderTpl(basePlainText, rec, account.email, camp.sender_name || account.name, settings) : '';
         const subj = getSubject(rec, account.email, camp.sender_name || account.name);
         let retries = 0;
         while (retries <= (eh.retryFailed ? eh.maxRetries : 0)) {
           try {
-            const hdrs = getVariedHeaders(af); const sendResult = await smartSend(account.refresh_token, { recipients: [rec], subject: subj, htmlContent: html || undefined, senderName: camp.sender_name, replyTo: camp.reply_to, replyToName: camp.reply_to_name || settings.replyToName, headers: hdrs, saveToSent: settings.saveToSent }, account.email, camp.provider || settings.sendProvider, account.id);
+            const hdrs = getVariedHeaders(af); const sendResult = await smartSend(account.refresh_token, { recipients: [rec], subject: subj, htmlContent: html || undefined, textContent: plainText || undefined, senderName: camp.sender_name, replyTo: camp.reply_to, replyToName: camp.reply_to_name || settings.replyToName, headers: hdrs, saveToSent: settings.saveToSent }, account.email, camp.provider || settings.sendProvider, account.id);
             sent++; results.push({ recipient: rec, success: true, account: account.email, provider: sendResult?.provider || camp.provider || settings.sendProvider, timestamp: new Date().toISOString() }); recordSend();
             db.prepare("UPDATE accounts SET send_count=send_count+1,last_used=datetime('now') WHERE id=?").run(account.id); consecutiveErrors = 0; break;
           } catch (e) {
@@ -1544,11 +1548,14 @@ app.post('/api/verify/check-api', async (req, res) => { const { apiKey } = req.b
 // ═══ SEND ═══
 app.post('/api/send', async (req, res) => {
   const a = getActiveAccount(); if (!a) return res.status(400).json({ error: 'No active account' });
-  const { recipients, subject, templateName, htmlContent, senderName, replyTo, replyToName, mode, batchSize, delay, appendFooter } = req.body;
+  const { recipients, subject, templateName, htmlContent, plainTextBody, senderName, replyTo, replyToName, mode, batchSize, delay, appendFooter } = req.body;
   if (!recipients?.length) return res.status(400).json({ error: 'No recipients' }); if (!subject) return res.status(400).json({ error: 'Subject required' });
   const settings = loadAllSettings(); const provider = req.body.provider || settings.sendProvider || 'graph';
   let baseHtml = htmlContent || ''; if (templateName) { const tpl = db.prepare('SELECT content FROM templates WHERE account_id=? AND name=?').get(a.id, templateName); if (tpl) baseHtml = tpl.content; }
-  const campId = uid(); db.prepare('INSERT INTO campaigns (id,account_id,name,status,subject,template_name,sender_name,reply_to,mode,batch_size,delay_seconds,provider,total,html_content,results) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(campId, a.id, `Quick Send - ${subject.substring(0, 30)}`, 'running', subject, templateName || '', senderName || '', replyTo || '', mode || 'TO (individual)', batchSize || 190, delay || 4, provider, recipients.length, baseHtml, JSON.stringify({ pendingRecipients: recipients }));
+  const isPlainText = !baseHtml && !!plainTextBody;
+  const content = baseHtml || plainTextBody || '';
+  const campName = isPlainText ? `Plain Text - ${subject.substring(0, 30)}` : `Quick Send - ${subject.substring(0, 30)}`;
+  const campId = uid(); db.prepare('INSERT INTO campaigns (id,account_id,name,status,subject,template_name,sender_name,reply_to,mode,batch_size,delay_seconds,provider,total,html_content,results) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(campId, a.id, campName, 'running', subject, templateName || '', senderName || '', replyTo || '', mode || 'TO (individual)', batchSize || 190, delay || 4, provider, recipients.length, isPlainText ? '' : content, JSON.stringify({ pendingRecipients: recipients, plainTextBody: isPlainText ? content : undefined }));
   runCampaign(campId).catch(e => console.error('Campaign error:', e));
   res.json({ success: true, campaignId: campId, status: 'running', total: recipients.length, message: 'Campaign started. Poll /api/campaigns/' + campId + ' for progress.' });
 });

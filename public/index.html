@@ -1,1314 +1,813 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Token Sender v2.1</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<style>
-:root{--bg:#0a0a0f;--sidebar:#0e0e16;--card:#12121c;--card2:#161624;--border:rgba(255,255,255,0.05);--border-l:rgba(255,255,255,0.08);--text:#e2e2ec;--dim:#6b6b80;--muted:#3d3d52;--accent:#6366f1;--accent-h:#4f46e5;--accent-g:rgba(99,102,241,0.12);--danger:#ef4444;--danger-g:rgba(239,68,68,0.12);--success:#10b981;--success-g:rgba(16,185,129,0.12);--warning:#f59e0b;--warning-g:rgba(245,158,11,0.12);--purple:#8b5cf6;--purple-g:rgba(139,92,246,0.12);--inp:#0f0f1a;--inp-b:#1e1e30;--orange:#f97316;--cyan:#06b6d4;--pink:#ec4899;--r1:10px;--r2:14px;--r3:18px}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;overflow:hidden}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#222;border-radius:4px}
-.sb{width:200px;background:var(--sidebar);border-right:1px solid var(--border);position:fixed;top:0;left:0;bottom:0;z-index:100;display:flex;flex-direction:column;overflow-y:auto}
-.sb-brand{padding:1.2rem 1.4rem;display:flex;align-items:center;gap:.7rem;border-bottom:1px solid var(--border)}
-.sb-brand .logo{width:32px;height:32px;background:linear-gradient(135deg,var(--accent),var(--purple));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff}
-.sb-brand .brand-text{display:flex;flex-direction:column}.sb-brand .brand-text span:first-child{font-weight:700;font-size:.82rem;color:#fff}.sb-brand .brand-text span:last-child{font-size:.6rem;color:var(--dim);font-weight:500;letter-spacing:.5px}
-.sb-section{padding:.6rem .7rem;margin-top:.4rem}.sb-section-title{font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);padding:0 .6rem .4rem;margin-bottom:.2rem}
-.ni{display:flex;align-items:center;gap:.65rem;padding:.5rem .7rem;border-radius:var(--r1);cursor:pointer;font-size:.76rem;color:var(--dim);transition:all .15s;text-decoration:none;position:relative;font-weight:500}
-.ni:hover{background:rgba(255,255,255,.03);color:var(--text)}.ni.active{background:var(--accent-g);color:var(--accent)}
-.ni i{width:16px;text-align:center;font-size:.8rem}
-.ni .badge{position:absolute;right:8px;font-size:.58rem;padding:1px 6px;border-radius:10px;font-weight:700}
-.ni .badge-live{background:var(--success-g);color:var(--success)}
-.main{margin-left:200px;flex:1;overflow-y:auto;height:100vh;padding:0}
-.topbar{padding:.9rem 2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg);position:sticky;top:0;z-index:50;backdrop-filter:blur(10px)}
-.topbar .page-title{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:.6rem}
-.topbar .page-title .icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.75rem}
-.topbar-right{display:flex;align-items:center;gap:.8rem}
-.topbar-badge{font-size:.68rem;padding:.25rem .6rem;border-radius:20px;font-weight:600;display:flex;align-items:center;gap:.3rem}
-.content{padding:1.5rem 2rem 3rem}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:1.2rem;margin-bottom:.8rem}
-.card-h{font-size:.8rem;font-weight:600;margin-bottom:.8rem;display:flex;align-items:center;justify-content:space-between}
-.card-h .icon{margin-right:.4rem}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
-.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.8rem}
-.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem}
-.g5{display:grid;grid-template-columns:repeat(5,1fr);gap:.6rem}
-label{display:block;font-size:.68rem;color:var(--dim);margin-bottom:.2rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
-input[type="text"],input[type="number"],input[type="email"],input[type="password"],textarea,select{width:100%;background:var(--inp);border:1px solid var(--inp-b);border-radius:var(--r1);padding:.5rem .7rem;color:var(--text);font-size:.76rem;font-family:inherit;outline:none;transition:.15s}
-input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-g)}
-textarea{resize:vertical;min-height:65px}
-select{cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%236b6b80' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .6rem center}
-.btn{display:inline-flex;align-items:center;gap:.35rem;padding:.42rem .85rem;border-radius:var(--r1);font-size:.72rem;font-weight:600;cursor:pointer;border:none;transition:all .15s;font-family:inherit}
-.bp{background:var(--accent);color:#fff}.bp:hover{background:var(--accent-h);transform:translateY(-1px);box-shadow:0 4px 12px rgba(99,102,241,0.3)}
-.bd{background:var(--danger);color:#fff}.bd:hover{background:#dc2626}
-.bs2{background:var(--success);color:#fff}.bs2:hover{background:#059669}
-.bw{background:var(--warning-g);color:var(--warning);border:1px solid rgba(245,158,11,0.2)}.bw:hover{background:rgba(245,158,11,0.2)}
-.bk{background:rgba(255,255,255,0.04);color:var(--text);border:1px solid var(--border-l)}.bk:hover{background:rgba(255,255,255,0.07)}
-.bsm{padding:.3rem .55rem;font-size:.66rem}
-.stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:1rem 1.2rem;position:relative;overflow:hidden}
-.stat-card .stat-icon{position:absolute;top:-.5rem;right:-.2rem;font-size:2.5rem;opacity:.06}
-.stat-card .stat-val{font-size:1.6rem;font-weight:800;line-height:1}.stat-card .stat-lbl{font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.7px;margin-top:.3rem;color:var(--dim)}
-.stat-card .stat-sub{font-size:.62rem;color:var(--dim);margin-top:.3rem;display:flex;align-items:center;gap:.3rem}
-.stat-card .stat-sub .up{color:var(--success)}.stat-card .stat-sub .down{color:var(--danger)}
-.tag{display:inline-block;padding:2px 7px;border-radius:5px;font-size:.66rem;font-family:'Courier New',monospace;font-weight:600}
-.tag-b{background:var(--accent-g);color:var(--accent)}.tag-g{background:var(--success-g);color:var(--success)}.tag-p{background:var(--purple-g);color:var(--purple)}.tag-o{background:rgba(249,115,22,.12);color:var(--orange)}.tag-c{background:rgba(6,182,212,.12);color:var(--cyan)}.tag-r{background:var(--danger-g);color:var(--danger)}.tag-w{background:var(--warning-g);color:var(--warning)}
-.rg{display:flex;flex-direction:column;gap:.3rem}.rg label{display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.76rem;color:var(--text);text-transform:none;letter-spacing:0;font-weight:400}.rg input[type="radio"]{accent-color:var(--accent);width:14px;height:14px}
-.tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.7rem}
-.tc2{background:var(--card2);border:1px solid var(--border);border-radius:var(--r2);padding:.8rem;text-align:center;transition:.15s}
-.tc2:hover{border-color:var(--accent);transform:translateY(-2px)}
-.tc2 .nm{font-size:.72rem;font-weight:600;margin-bottom:.35rem;word-break:break-all}.tc2 .ty{font-size:.6rem;color:var(--dim);text-transform:uppercase;font-weight:600;letter-spacing:.5px}
-.tc2 .act{display:flex;gap:.3rem;justify-content:center;margin-top:.5rem}
-.cb{display:flex;align-items:center;gap:.5rem;font-size:.76rem;cursor:pointer;margin:.15rem 0;font-weight:400}.cb input[type="checkbox"]{accent-color:var(--accent);width:15px;height:15px}
-.sendbar{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;padding:.8rem 1rem;background:var(--card2);border:1px solid var(--border);border-radius:var(--r2);margin-top:.6rem}
-.rp{background:var(--inp);border:1px solid var(--border);border-radius:var(--r1);padding:.8rem;margin-top:.6rem;max-height:280px;overflow-y:auto;font-size:.7rem;font-family:'Courier New',monospace;white-space:pre-wrap;line-height:1.5}
-.page{display:none}.page.active{display:block}
-.ai{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;font-size:.78rem}.ai .al{color:var(--dim);font-weight:500}.ai .av{color:#fff;font-weight:600;text-align:right}
-.toast{position:fixed;top:20px;right:20px;padding:.65rem 1rem;border-radius:var(--r1);font-size:.74rem;z-index:9999;animation:si .3s ease;color:#fff;font-weight:500;display:flex;align-items:center;gap:.4rem;box-shadow:0 8px 24px rgba(0,0,0,.4)}
-.ts{background:linear-gradient(135deg,#059669,#10b981)}.te{background:linear-gradient(135deg,#dc2626,#ef4444)}.tw{background:linear-gradient(135deg,#d97706,#f59e0b)}
-@keyframes si{from{transform:translateX(100%) scale(.9);opacity:0}to{transform:translateX(0) scale(1);opacity:1}}
-.tref{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;font-size:.72rem}.tref h4{font-size:.75rem;font-weight:600;margin-bottom:.35rem;color:var(--text)}
-.modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:999;display:none;align-items:center;justify-content:center}.modal.show{display:flex}
-.mc{background:var(--card);border:1px solid var(--border);border-radius:var(--r3);width:85%;max-width:950px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,.5)}
-.mh{padding:.8rem 1.2rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.85rem}
-.mb{flex:1;padding:1rem;overflow:auto}.mb textarea{min-height:400px;font-family:'Courier New',monospace;font-size:.76rem}
-.pf{width:100%;min-height:400px;border:none;background:#fff;border-radius:var(--r1)}
-.ss{margin-bottom:1rem}.ss h3{font-size:.82rem;font-weight:700;margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem}
-.ckg{display:grid;grid-template-columns:1fr 1fr;gap:.2rem}
-.ig{display:flex;gap:.6rem;align-items:end}.ig>div{flex:1}
-.si2{display:none;align-items:center;gap:.5rem;color:var(--warning);font-size:.76rem;margin-top:.4rem;padding:.5rem;background:var(--warning-g);border-radius:var(--r1)}.si2.active{display:flex}
-.si2 .sp{width:14px;height:14px;border:2px solid var(--warning);border-top:2px solid transparent;border-radius:50%;animation:spin 1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.table{width:100%;border-collapse:collapse;font-size:.72rem}
-.table th{text-align:left;padding:.5rem .6rem;font-weight:600;color:var(--dim);border-bottom:1px solid var(--border);font-size:.64rem;text-transform:uppercase;letter-spacing:.5px}
-.table td{padding:.5rem .6rem;border-bottom:1px solid var(--border);vertical-align:middle}
-.table tr:hover td{background:rgba(255,255,255,.02)}
-.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:.4rem}
-.status-active{background:var(--success)}.status-restricted{background:var(--danger)}.status-error{background:var(--warning)}
-.pill{display:inline-flex;align-items:center;padding:.15rem .5rem;border-radius:20px;font-size:.62rem;font-weight:600}
-.pill-success{background:var(--success-g);color:var(--success)}.pill-danger{background:var(--danger-g);color:var(--danger)}.pill-warning{background:var(--warning-g);color:var(--warning)}.pill-info{background:var(--accent-g);color:var(--accent)}.pill-muted{background:rgba(255,255,255,.05);color:var(--dim)}
-.progress-bar{height:6px;background:var(--inp);border-radius:3px;overflow:hidden;margin-top:.3rem}
-.progress-bar .fill{height:100%;border-radius:3px;transition:width .3s}
-.fill-success{background:linear-gradient(90deg,#059669,#10b981)}.fill-accent{background:linear-gradient(90deg,#4f46e5,#6366f1)}.fill-danger{background:linear-gradient(90deg,#dc2626,#ef4444)}
-.chart-box{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:1rem}
-.empty-state{text-align:center;padding:2rem;color:var(--dim);font-size:.78rem}
-.empty-state i{font-size:2rem;margin-bottom:.6rem;display:block;opacity:.3}
-.acct-card{background:var(--card2);border:1px solid var(--border);border-radius:var(--r2);padding:.8rem;display:flex;align-items:center;gap:.8rem;transition:.15s}
-.acct-card:hover{border-color:var(--accent)}.acct-card.active-acct{border-color:var(--accent);background:var(--accent-g)}
-.acct-card .acct-avatar{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#fff;flex-shrink:0}
-.acct-card .acct-info{flex:1;min-width:0}.acct-card .acct-email{font-size:.74rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.acct-card .acct-meta{font-size:.6rem;color:var(--dim);display:flex;gap:.6rem;margin-top:.15rem}
-.acct-card .acct-actions{display:flex;gap:.3rem;flex-shrink:0}
-.camp-status{display:inline-flex;align-items:center;gap:.3rem;font-size:.66rem;font-weight:600;padding:.2rem .5rem;border-radius:12px}
-.camp-running{background:var(--success-g);color:var(--success)}.camp-completed{background:var(--accent-g);color:var(--accent)}.camp-paused{background:var(--warning-g);color:var(--warning)}.camp-draft{background:rgba(255,255,255,.05);color:var(--dim)}.camp-error{background:var(--danger-g);color:var(--danger)}
-@media(max-width:900px){.sb{width:60px}.sb .sb-brand span,.sb .sb-section-title,.sb .ni span,.sb .ni .badge{display:none}.sb .ni{justify-content:center;padding:.5rem}.main{margin-left:60px}.g2,.g3,.g4,.g5{grid-template-columns:1fr}.tref{grid-template-columns:1fr 1fr}}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoReply Engine — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    :root { --bg:#0a0e1a; --bg2:#111827; --bg3:#1e293b; --card:#151d2e; --border:#1e293b; --border2:#334155; --text:#e2e8f0; --text2:#94a3b8; --text3:#64748b; --accent:#6366f1; --accent2:#818cf8; --green:#10b981; --red:#ef4444; --yellow:#f59e0b; --blue:#3b82f6; }
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg2)}::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
+
+    .app{display:flex;height:100vh}
+    .sidebar{width:240px;min-width:240px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+    .sidebar-header{padding:20px;border-bottom:1px solid var(--border)}
+    .sidebar-header h1{font-size:16px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:8px}
+    .sidebar-header .version{font-size:11px;color:var(--text3);margin-top:2px}
+    .nav-section{padding:10px 0;border-bottom:1px solid var(--border)}
+    .nav-label{padding:4px 20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text3)}
+    .nav-item{display:flex;align-items:center;gap:10px;padding:9px 20px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500;border-left:3px solid transparent;transition:all .15s}
+    .nav-item:hover{background:var(--bg3);color:var(--text)}
+    .nav-item.active{background:rgba(99,102,241,.1);color:var(--accent);border-left-color:var(--accent)}
+    .nav-item .icon{width:18px;text-align:center;font-size:13px}
+    .nav-item .badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700}
+
+    .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+    .topbar{height:52px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;justify-content:space-between}
+    .topbar-title{font-size:16px;font-weight:600}
+    .content{flex:1;overflow-y:auto;padding:24px}
+
+    .panel{display:none}.panel.active{display:block}
+
+    .stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px}
+    .stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;transition:all .2s}
+    .stat-card:hover{border-color:var(--accent)}
+    .stat-card .label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:6px}
+    .stat-card .value{font-size:28px;font-weight:700;color:var(--accent)}
+    .stat-card .sub{font-size:11px;color:var(--text3);margin-top:2px}
+
+    .btn{padding:7px 14px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .btn-primary{background:var(--accent);color:#fff}.btn-primary:hover:not(:disabled){background:var(--accent2)}
+    .btn-success{background:var(--green);color:#fff}.btn-success:hover:not(:disabled){opacity:.85}
+    .btn-danger{background:var(--red);color:#fff}.btn-danger:hover:not(:disabled){opacity:.85}
+    .btn-secondary{background:var(--bg3);color:var(--text)}.btn-secondary:hover:not(:disabled){background:var(--border2)}
+    .btn-sm{padding:5px 10px;font-size:11px}
+    .btn-xs{padding:3px 7px;font-size:10px;border-radius:6px}
+    .btn-ghost{background:transparent;color:var(--text2);padding:5px 8px}.btn-ghost:hover{background:var(--bg3);color:var(--text)}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px}
+    .card:hover{border-color:var(--border2)}
+    .card h3{font-size:14px;font-weight:600;margin-bottom:10px}
+
+    .form-group{margin-bottom:14px}
+    .form-group label{display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
+    .form-input,.form-select,.form-textarea{width:100%;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;transition:border-color .15s}
+    .form-input:focus,.form-select:focus,.form-textarea:focus{outline:none;border-color:var(--accent)}
+    .form-textarea{min-height:80px;resize:vertical;font-family:'Consolas','Fira Code',monospace;font-size:12px}
+
+    .badge-pill{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.3px}
+    .badge-green{background:rgba(16,185,129,.15);color:var(--green)}
+    .badge-red{background:rgba(239,68,68,.15);color:var(--red)}
+    .badge-yellow{background:rgba(245,158,11,.15);color:var(--yellow)}
+    .badge-blue{background:rgba(59,130,246,.15);color:var(--blue)}
+    .badge-purple{background:rgba(99,102,241,.15);color:var(--accent)}
+    .badge-gray{background:rgba(100,116,139,.15);color:var(--text3)}
+
+    .table{width:100%;border-collapse:collapse}
+    .table th,.table td{padding:10px 12px;text-align:left;font-size:12px;border-bottom:1px solid var(--border)}
+    .table th{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);font-weight:700;background:var(--bg2);position:sticky;top:0}
+    .table tr:hover td{background:rgba(99,102,241,.03)}
+
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:5000;display:none;justify-content:center;align-items:center;backdrop-filter:blur(4px)}
+    .modal-overlay.show{display:flex}
+    .modal{background:var(--card);border:1px solid var(--border);border-radius:16px;width:90%;max-width:650px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,.3)}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)}
+    .modal-header h3{font-size:16px;font-weight:600}
+    .modal-body{padding:22px;overflow-y:auto;flex:1}
+    .modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+
+    .toast-container{position:fixed;top:16px;right:16px;z-index:10000;display:flex;flex-direction:column;gap:8px}
+    .toast{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:280px;max-width:400px;display:flex;align-items:flex-start;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.3);animation:slideIn .3s ease;font-size:12px}
+    .toast.success{border-left:3px solid var(--green)}.toast.error{border-left:3px solid var(--red)}.toast.info{border-left:3px solid var(--blue)}
+    @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+    .email-card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:10px;transition:all .15s}
+    .email-card:hover{border-color:var(--border2)}
+    .email-card .from{font-size:13px;font-weight:600;color:var(--text)}
+    .email-card .subject{font-size:12px;color:var(--text2);margin-top:2px}
+    .email-card .meta{font-size:11px;color:var(--text3);margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .email-card .body-preview{font-size:11px;color:var(--text3);margin-top:8px;padding:8px 10px;background:var(--bg2);border-radius:6px;max-height:60px;overflow:hidden;font-family:monospace;white-space:pre-wrap}
+    .email-card .reply-preview{font-size:11px;color:var(--green);margin-top:8px;padding:8px 10px;background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.15);border-radius:6px;max-height:80px;overflow:hidden;font-family:monospace;white-space:pre-wrap}
+    .email-card .actions{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+
+    .engine-status{display:flex;align-items:center;gap:8px;font-size:12px}
+    .engine-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+    .engine-dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+    .engine-dot.off{background:var(--red)}
+
+    .empty-state{text-align:center;padding:50px 20px;color:var(--text3)}
+    .empty-state .icon{font-size:42px;margin-bottom:10px;opacity:.4}
+    .empty-state h3{font-size:16px;color:var(--text2);margin-bottom:6px}
+    .empty-state p{font-size:13px}
+
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+    .sidebar-footer{margin-top:auto;padding:14px 20px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
+  </style>
 </head>
 <body>
-
-<!-- ACCESS GATE REMOVED — app is fully open -->
-
-<div id="app-container" style="display:flex;width:100%;min-height:100vh">
-<div class="sb">
-  <div class="sb-brand"><div class="logo">TS</div><div class="brand-text"><span>Token Sender</span><span>Enterprise v2.1</span></div></div>
-  <div class="sb-section"><div class="sb-section-title">Core</div>
-    <a class="ni active" data-page="dashboard" onclick="sp('dashboard')"><i class="fas fa-th-large"></i><span>Dashboard</span></a>
-    <a class="ni" data-page="campaigns" onclick="sp('campaigns')"><i class="fas fa-bullhorn"></i><span>Campaigns</span><span class="badge badge-live" id="camp-badge" style="display:none">0</span></a>
-    <a class="ni" data-page="accounts" onclick="sp('accounts')"><i class="fas fa-users"></i><span>Accounts</span></a>
-  </div>
-  <div class="sb-section"><div class="sb-section-title">Email</div>
-    <a class="ni" data-page="templates" onclick="sp('templates')"><i class="far fa-file-code"></i><span>Templates</span></a>
-    <a class="ni" data-page="image-email" onclick="sp('image-email')"><i class="far fa-image"></i><span>Image Email</span></a>
-    <a class="ni" data-page="msg-to-image" onclick="sp('msg-to-image')"><i class="fas fa-camera"></i><span>Msg to Image</span></a>
-    <a class="ni" data-page="attachment-send" onclick="sp('attachment-send')"><i class="fas fa-paperclip"></i><span>Attachments</span></a>
-  </div>
-  <div class="sb-section"><div class="sb-section-title">Tools</div>
-    <a class="ni" data-page="verify" onclick="sp('verify')"><i class="fas fa-check-double"></i><span>Verify</span></a>
-    <a class="ni" data-page="mx-sorter" onclick="sp('mx-sorter')"><i class="fas fa-sort-amount-down"></i><span>MX Sorter</span></a>
-    <a class="ni" data-page="analytics" onclick="sp('analytics')"><i class="fas fa-chart-bar"></i><span>Analytics</span></a>
-  </div>
-  <div class="sb-section"><div class="sb-section-title">Config</div>
-    <a class="ni" data-page="settings" onclick="sp('settings')"><i class="fas fa-cog"></i><span>Settings</span></a>
-    <a class="ni" data-page="logs" onclick="sp('logs')"><i class="fas fa-scroll"></i><span>Logs</span></a>
-  </div>
-  <div class="sb-section" id="sb-infra" style="display:none"><div class="sb-section-title">Infra</div>
-    <a class="ni" data-page="deploy" onclick="sp('deploy')"><i class="fas fa-cloud-upload-alt"></i><span>Deploy</span></a>
-  </div>
-</div>
-
-<div class="main">
-<!-- ═══════ DASHBOARD ═══════ -->
-<div id="p-dashboard" class="page active">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:var(--accent-g);color:var(--accent)"><i class="fas fa-th-large"></i></div>Dashboard</div>
-<div class="topbar-right"><span class="topbar-badge" style="background:var(--success-g);color:var(--success)" id="auth-badge"><i class="fas fa-circle" style="font-size:6px"></i> <span id="tb-email">No account</span></span><span class="topbar-badge" style="background:var(--accent-g);color:var(--accent)">v2.1</span></div></div>
-<div class="content">
-  <div class="g4" style="margin-bottom:1rem">
-    <div class="stat-card"><i class="fas fa-paper-plane stat-icon"></i><div class="stat-val c-accent" id="ds-sent">0</div><div class="stat-lbl">Total Sent</div><div class="stat-sub"><span class="up" id="ds-today">+0 today</span></div></div>
-    <div class="stat-card"><i class="fas fa-exclamation-triangle stat-icon"></i><div class="stat-val" style="color:var(--danger)" id="ds-failed">0</div><div class="stat-lbl">Total Failed</div></div>
-    <div class="stat-card"><i class="fas fa-users stat-icon"></i><div class="stat-val" style="color:var(--purple)" id="ds-accounts">0</div><div class="stat-lbl">Accounts</div><div class="stat-sub" id="ds-acct-sub"></div></div>
-    <div class="stat-card"><i class="fas fa-bullhorn stat-icon"></i><div class="stat-val" style="color:var(--cyan)" id="ds-campaigns">0</div><div class="stat-lbl">Campaigns</div><div class="stat-sub" id="ds-camp-sub"></div></div>
-  </div>
-  <div class="g2">
-    <div class="card">
-      <div class="card-h"><span><i class="fas fa-key icon"></i>Active Account</span><button class="btn bk bsm" onclick="sp('accounts')">Manage</button></div>
-      <div class="ai"><span class="al">Email</span><span class="av" id="ae">--</span><span class="al">Name</span><span class="av" id="an">--</span><span class="al">Expires</span><span class="av" id="ax">--</span><span class="al">Provider</span><span class="av" id="ap">--</span><span class="al">Sends</span><span class="av" id="asc">0</span></div>
-      <div style="margin-top:.6rem"><label>Newsletter Admin URL</label><div style="display:flex;gap:.3rem"><input type="text" id="admin-url" placeholder="https://your-admin.pages.dev" style="flex:1;font-size:.72rem"><button class="btn bs2 bsm" onclick="saveAdminUrl()"><i class="fas fa-save"></i></button></div></div>
-      <div style="margin-top:.4rem"><label>Load Token</label><div style="display:flex;gap:.3rem"><select id="ts" style="flex:1"><option value="">Set admin URL above then refresh</option></select><button class="btn bp bsm" onclick="loadTk()"><i class="fas fa-download"></i> Load</button><button class="btn bk bsm" onclick="refTkList()"><i class="fas fa-sync"></i></button></div></div>
-    </div>
-    <div class="card">
-      <div class="card-h"><span><i class="fas fa-address-book icon"></i>Extract Leads</span></div>
-      <p style="font-size:.7rem;color:var(--dim);margin-bottom:.6rem">Extract email addresses from Outlook mailbox & contacts.</p>
-      <div style="text-align:center;padding:.3rem 0"><div class="stat-val" style="color:var(--accent)" id="lc">0</div><div style="font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);margin-top:.2rem">emails extracted</div></div>
-      <div id="extract-progress" style="display:none;margin:.5rem 0;padding:.5rem .7rem;background:var(--accent-g);border-radius:var(--r1);font-size:.72rem;color:var(--accent)">
-        <div style="display:flex;align-items:center;justify-content:space-between"><span id="extract-status">Connecting to mailbox...</span><span id="extract-pct" style="font-weight:700"></span></div>
-        <div class="progress-bar" style="margin-top:.4rem"><div class="fill fill-accent" id="extract-bar" style="width:0%"></div></div>
-        <div id="extract-stats" style="display:none;margin-top:.4rem;display:grid;grid-template-columns:repeat(4,1fr);gap:.3rem;font-size:.65rem;color:var(--dim)">
-          <div><div style="text-transform:uppercase;letter-spacing:.5px;font-size:.55rem">Folder</div><div style="font-weight:700;color:var(--text)" id="es-folder">--</div></div>
-          <div><div style="text-transform:uppercase;letter-spacing:.5px;font-size:.55rem">Extracted</div><div style="font-weight:700;color:var(--text)" id="es-extracted">0</div></div>
-          <div><div style="text-transform:uppercase;letter-spacing:.5px;font-size:.55rem">Total</div><div style="font-weight:700;color:var(--text)" id="es-total">0</div></div>
-          <div><div style="text-transform:uppercase;letter-spacing:.5px;font-size:.55rem">Folders</div><div style="font-weight:700;color:var(--text)" id="es-folders">0</div></div>
+  <div class="app">
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h1><i class="fas fa-robot"></i> AutoReply</h1>
+        <div class="version">v1.0 Enterprise</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Dashboard</div>
+        <div class="nav-item active" data-panel="overview" onclick="switchPanel('overview')">
+          <span class="icon"><i class="fas fa-chart-line"></i></span> Overview
+        </div>
+        <div class="nav-item" data-panel="approval" onclick="switchPanel('approval')">
+          <span class="icon"><i class="fas fa-check-circle"></i></span> Approval Queue <span class="badge" id="navApprovalCount" style="display:none">0</span>
         </div>
       </div>
-      <div style="display:flex;gap:.3rem;justify-content:center;margin-top:.6rem">
-        <button class="btn bp bsm" id="extract-btn" onclick="extractLeads()"><i class="fas fa-download"></i> Extract</button>
-        <button class="btn bk bsm" onclick="dlLeads()"><i class="fas fa-file-download"></i> TXT</button>
-        <button class="btn bk bsm" onclick="clrLeads()"><i class="fas fa-trash"></i> Clear</button>
+      <div class="nav-section">
+        <div class="nav-label">Management</div>
+        <div class="nav-item" data-panel="accounts" onclick="switchPanel('accounts')">
+          <span class="icon"><i class="fas fa-envelope"></i></span> Email Accounts
+        </div>
+        <div class="nav-item" data-panel="emails" onclick="switchPanel('emails')">
+          <span class="icon"><i class="fas fa-inbox"></i></span> All Emails
+        </div>
+        <div class="nav-item" data-panel="activity" onclick="switchPanel('activity')">
+          <span class="icon"><i class="fas fa-history"></i></span> Activity Log
+        </div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">System</div>
+        <div class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
+          <span class="icon"><i class="fas fa-cog"></i></span> Settings
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="engine-status" id="engineStatus">
+          <span class="engine-dot off" id="engineDot"></span>
+          <span id="engineLabel">Engine stopped</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="topbar">
+        <div class="topbar-title" id="topbarTitle">Overview</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-success btn-sm" id="btnStartEngine" onclick="toggleEngine()"><i class="fas fa-play"></i> Start Engine</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <!-- OVERVIEW -->
+        <div class="panel active" id="panel-overview">
+          <div class="stats-row" id="statsRow"></div>
+          <h3 style="margin-bottom:14px;font-size:15px">Recent Activity</h3>
+          <div id="recentActivity"></div>
+        </div>
+
+        <!-- APPROVAL QUEUE -->
+        <div class="panel" id="panel-approval">
+          <div class="toolbar">
+            <button class="btn btn-secondary btn-sm" onclick="loadApprovalQueue()"><i class="fas fa-sync"></i> Refresh</button>
+            <span style="font-size:12px;color:var(--text3)" id="approvalInfo"></span>
+          </div>
+          <div id="approvalList"></div>
+        </div>
+
+        <!-- ACCOUNTS -->
+        <div class="panel" id="panel-accounts">
+          <div class="toolbar">
+            <button class="btn btn-primary btn-sm" onclick="showAddAccountModal()"><i class="fas fa-plus"></i> Add Account</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadAccounts()"><i class="fas fa-sync"></i> Refresh</button>
+          </div>
+          <div id="accountsList"></div>
+        </div>
+
+        <!-- ALL EMAILS -->
+        <div class="panel" id="panel-emails">
+          <div class="toolbar">
+            <select class="form-select" style="width:auto;min-width:200px" id="emailFilterAccount" onchange="loadEmails()">
+              <option value="">All accounts</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="loadEmails()"><i class="fas fa-sync"></i> Refresh</button>
+            <span style="font-size:12px;color:var(--text3)" id="emailInfo"></span>
+          </div>
+          <div id="emailsList"></div>
+        </div>
+
+        <!-- ACTIVITY LOG -->
+        <div class="panel" id="panel-activity">
+          <div class="toolbar">
+            <button class="btn btn-secondary btn-sm" onclick="loadActivity()"><i class="fas fa-sync"></i> Refresh</button>
+          </div>
+          <div id="activityList"></div>
+        </div>
+
+        <!-- SETTINGS -->
+        <div class="panel" id="panel-settings">
+          <div class="card">
+            <h3><i class="fas fa-key"></i> Authentication</h3>
+            <div class="form-group">
+              <label>Admin Password</label>
+              <input class="form-input" id="setAdminPw" type="password" placeholder="Dashboard password">
+            </div>
+          </div>
+          <div class="card">
+            <h3><i class="fas fa-brain"></i> AI Configuration</h3>
+            <div class="form-group">
+              <label>OpenAI API Key <span style="font-weight:normal;color:var(--text3)">(leave blank to use GenSpark proxy)</span></label>
+              <input class="form-input" id="setOpenaiKey" type="password" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+              <label>OpenAI Base URL <span style="font-weight:normal;color:var(--text3)">(leave blank for default)</span></label>
+              <input class="form-input" id="setOpenaiUrl" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <select class="form-select" id="setOpenaiModel">
+                <option value="gpt-5-mini">GPT-5 Mini (fast, cheap — recommended)</option>
+                <option value="gpt-5-nano">GPT-5 Nano (fastest, cheapest)</option>
+                <option value="gpt-5">GPT-5 (best quality)</option>
+              </select>
+            </div>
+          </div>
+          <div class="card">
+            <h3><i class="fas fa-clock"></i> Polling</h3>
+            <div class="form-group">
+              <label>Poll Interval (seconds)</label>
+              <input class="form-input" id="setPollInterval" type="number" min="30" max="600" value="120">
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveSettings()"><i class="fas fa-save"></i> Save Settings</button>
+        </div>
       </div>
     </div>
   </div>
-  <div class="card">
-    <div class="card-h"><span><i class="fas fa-paper-plane icon"></i>Quick Send</span></div>
-    <div class="g2">
-      <div><label>Template</label><div style="display:flex;gap:.3rem"><select id="st" style="flex:1"><option value="">-- No template --</option></select><button class="btn bk bsm" onclick="prevST()"><i class="fas fa-eye"></i></button></div></div>
-      <div><label>Subject</label><input type="text" id="ss2" placeholder="Email subject (supports {{tags}})"></div>
-    </div>
-    <div class="g2" style="margin-top:.5rem">
-      <div><label>Sender Name</label><input type="text" id="qs-sname" placeholder="Display name for sender"></div>
-      <div><label>Reply-To</label><input type="text" id="qs-reply" placeholder="reply@example.com"></div>
-    </div>
-    <div style="margin-top:.5rem"><label>Recipients</label>
-      <div class="rg" id="srt">
-        <label><input type="radio" name="sr" value="test" checked>Test leads (<span id="tc">0</span>)</label>
-        <label><input type="radio" name="sr" value="extracted">Extracted leads (<span id="ec">0</span>)</label>
-        <label><input type="radio" name="sr" value="file">Upload .txt file</label>
-        <label><input type="radio" name="sr" value="custom">Custom list</label>
+
+  <!-- ADD ACCOUNT MODAL -->
+  <div class="modal-overlay" id="addAccountModal">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <h3><i class="fas fa-plus-circle"></i> Add Email Account</h3>
+        <button class="btn-ghost" onclick="closeModal('addAccountModal')"><i class="fas fa-times"></i></button>
       </div>
-      <textarea id="srx" placeholder="One email per line..." style="margin-top:.3rem;display:none"></textarea>
-      <input type="file" id="srf" accept=".txt,.csv" style="display:none;margin-top:.3rem" onchange="ldRF(this)">
-    </div>
-    <div class="sendbar">
-      <div><label>Provider</label><select id="qs-prov" style="width:110px"><option value="graph">Graph API</option><option value="ews">EWS SOAP</option><option value="owa">OWA REST</option><option value="auto">Auto Failover</option></select></div>
-      <div><label>Mode</label><select id="sm"><option>TO (individual)</option><option>BCC (multiple per email)</option><option>BCC (bulk)</option></select></div>
-      <div><label>Batch</label><input type="number" id="sb" value="190" style="width:65px"></div>
-      <div><label>Delay</label><input type="number" id="sd" value="4" style="width:65px"></div>
-      <label class="cb"><input type="checkbox" id="sf" checked>Footer</label>
-      <button class="btn bp" onclick="sendEmails()"><i class="fas fa-paper-plane"></i> Send</button>
-    </div>
-    <div class="si2" id="si"><div class="sp"></div><span id="spg">Sending...</span></div>
-    <div id="sres" class="rp" style="display:none"></div>
-  </div>
-</div>
-</div>
-
-<!-- ═══════ CAMPAIGNS ═══════ -->
-<div id="p-campaigns" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:var(--purple-g);color:var(--purple)"><i class="fas fa-bullhorn"></i></div>Campaigns</div>
-<div class="topbar-right"><button class="btn bp bsm" onclick="showNewCampaign()"><i class="fas fa-plus"></i> New Campaign</button></div></div>
-<div class="content">
-  <div id="camp-list"></div>
-  <div id="camp-empty" class="empty-state"><i class="fas fa-bullhorn"></i>No campaigns yet. Send emails from Dashboard to create one.</div>
-</div>
-</div>
-
-<!-- ═══════ ACCOUNTS ═══════ -->
-<div id="p-accounts" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:var(--success-g);color:var(--success)"><i class="fas fa-users"></i></div>Account Manager</div>
-<div class="topbar-right"><button class="btn bp bsm" onclick="showAddAccount()"><i class="fas fa-plus"></i> Add Account</button><button class="btn bk bsm" onclick="refTkList();loadAccounts()"><i class="fas fa-sync"></i> Refresh</button></div></div>
-<div class="content">
-  <div class="g3" style="margin-bottom:.8rem">
-    <div class="stat-card"><div class="stat-val" style="color:var(--success)" id="acct-active">0</div><div class="stat-lbl">Active</div></div>
-    <div class="stat-card"><div class="stat-val" style="color:var(--danger)" id="acct-restricted">0</div><div class="stat-lbl">Restricted</div></div>
-    <div class="stat-card"><div class="stat-val" style="color:var(--accent)" id="acct-total-sends">0</div><div class="stat-lbl">Total Sends</div></div>
-  </div>
-  <div class="card">
-    <div class="card-h"><span><i class="fas fa-download icon"></i>Load from Token Source</span></div>
-    <div style="margin-bottom:.4rem"><label>Newsletter Admin URL</label><div style="display:flex;gap:.3rem"><input type="text" id="acct-admin-url" placeholder="https://your-admin.pages.dev" style="flex:1;font-size:.72rem"><button class="btn bs2 bsm" onclick="saveAdminUrl()"><i class="fas fa-save"></i></button></div></div>
-    <div style="display:flex;gap:.3rem"><select id="acct-tk-select" style="flex:1"><option value="">Set admin URL above then refresh</option></select><button class="btn bp bsm" onclick="addFromSource()"><i class="fas fa-plus"></i> Add</button><button class="btn bk bsm" onclick="refTkList()"><i class="fas fa-sync"></i></button></div>
-  </div>
-  <div id="acct-list" style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.6rem"></div>
-</div>
-</div>
-
-<!-- ═══════ TEMPLATES ═══════ -->
-<div id="p-templates" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:var(--orange);background:rgba(249,115,22,.12);color:var(--orange)"><i class="far fa-file-code"></i></div>Email Templates</div>
-<div class="topbar-right"><button class="btn bp bsm" onclick="newTpl()"><i class="fas fa-plus"></i> New</button><button class="btn bk bsm" onclick="uploadTplBtn()"><i class="fas fa-upload"></i> Upload</button><input type="file" id="tpl-upload" accept=".html,.txt,.mjml" style="display:none" onchange="uploadTpl(this)"></div></div>
-<div class="content">
-  <div class="card"><div class="card-h"><span><i class="fas fa-tags icon"></i>Template Tags</span></div>
-    <div class="tref">
-      <div><h4><i class="fas fa-user" style="color:var(--accent);margin-right:.3rem"></i>Recipient</h4>
-        <div><span class="tag tag-b">{{email}}</span> Full</div><div><span class="tag tag-b">{{name}}</span> Name</div><div><span class="tag tag-b">{{first_name}}</span></div><div><span class="tag tag-b">{{last_name}}</span></div><div><span class="tag tag-b">{{company}}</span></div><div><span class="tag tag-b">{{domain}}</span></div></div>
-      <div><h4><i class="fas fa-envelope" style="color:var(--success);margin-right:.3rem"></i>Sender</h4>
-        <div><span class="tag tag-g">{{sender_email}}</span></div><div><span class="tag tag-g">{{sender_name}}</span></div><div><span class="tag tag-g">{{sender_company}}</span></div></div>
-      <div><h4><i class="fas fa-clock" style="color:var(--purple);margin-right:.3rem"></i>Date/Time</h4>
-        <div><span class="tag tag-p">{{date}}</span> Today</div><div><span class="tag tag-p">{{date1}}</span> +1</div><div><span class="tag tag-p">{{date7}}</span> +7</div><div><span class="tag tag-p">{{date30}}</span> +30</div><div><span class="tag tag-p">{{time}}</span> <span class="tag tag-p">{{timestamp}}</span></div></div>
-      <div><h4><i class="fas fa-random" style="color:var(--orange);margin-right:.3rem"></i>Random</h4>
-        <div><span class="tag tag-o">{{random}}</span> 4-digit</div><div><span class="tag tag-o">{{random6}}</span> 6-digit</div><div><span class="tag tag-o">{{random7}}</span> 7-digit</div><div><span class="tag tag-o">{{randomchar5}}</span></div><div><span class="tag tag-o">{{randomstring10}}</span></div><div><span class="tag tag-o">{{uuid}}</span></div></div>
-    </div>
-  </div>
-  <div id="tl" class="tgrid"></div>
-</div>
-</div>
-
-<!-- ═══════ VERIFY ═══════ -->
-<div id="p-verify" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:var(--success-g);color:var(--success)"><i class="fas fa-check-double"></i></div>Email Verification</div></div>
-<div class="content">
-<div class="g2">
-  <div class="card"><div class="card-h"><span><i class="fas fa-key icon"></i>MillionVerifier API</span></div><label>API Key</label><input type="text" id="mvk" placeholder="Enter MillionVerifier API key"><button class="btn bk" style="margin-top:.5rem;width:100%" onclick="chkMV()"><i class="fas fa-check-circle"></i> Check API</button></div>
-  <div class="card"><div class="card-h"><span><i class="fas fa-chart-pie icon"></i>Results</span></div>
-    <div class="g4"><div style="text-align:center"><div class="stat-val" style="color:var(--success);font-size:1.3rem" id="vv">0</div><div style="font-size:.58rem;font-weight:700;color:var(--success);text-transform:uppercase">Valid</div></div><div style="text-align:center"><div class="stat-val" style="color:var(--warning);font-size:1.3rem" id="vc">0</div><div style="font-size:.58rem;font-weight:700;color:var(--warning);text-transform:uppercase">Catch-All</div></div><div style="text-align:center"><div class="stat-val" style="color:var(--danger);font-size:1.3rem" id="vi">0</div><div style="font-size:.58rem;font-weight:700;color:var(--danger);text-transform:uppercase">Invalid</div></div><div style="text-align:center"><div class="stat-val" style="color:var(--purple);font-size:1.3rem" id="vd">0</div><div style="font-size:.58rem;font-weight:700;color:var(--purple);text-transform:uppercase">Disposable</div></div></div>
-  </div>
-</div>
-<div class="card"><div class="card-h"><span><i class="fas fa-list icon"></i>Emails</span><div style="display:flex;gap:.3rem"><button class="btn bk bsm" onclick="useExtV()">Use Extracted</button><button class="btn bk bsm" onclick="$('vuf').click()"><i class="fas fa-upload"></i> Upload</button></div></div>
-<input type="file" id="vuf" accept=".txt,.csv" style="display:none" onchange="ldVF(this)"><textarea id="ve" placeholder="Paste emails (one per line)" style="min-height:120px"></textarea>
-<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.4rem"><span style="font-size:.68rem;color:var(--dim)" id="vcnt">0 emails</span><button class="btn bp" onclick="startVerify()"><i class="fas fa-check-double"></i> Verify All</button></div></div>
-</div></div>
-
-<!-- ═══════ MX SORTER ═══════ -->
-<div id="p-mx-sorter" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(6,182,212,.12);color:var(--cyan)"><i class="fas fa-sort-amount-down"></i></div>MX Sorter &amp; Pipeline</div>
-<div class="topbar-right"><button class="btn bk bsm" onclick="useExtMX()"><i class="fas fa-download"></i> Use Extracted</button><button class="btn bk bsm" onclick="$('muf').click()"><i class="fas fa-upload"></i> Upload</button><input type="file" id="muf" accept=".txt,.csv" style="display:none" onchange="ldMF(this)"></div></div>
-<div class="content">
-<!-- STEP 1: Input & Sort -->
-<div class="card">
-  <div class="card-h"><span><i class="fas fa-sort icon"></i>Step 1: Sort by MX Provider</span><button class="btn bp bsm" id="mx-sort-btn" onclick="sortMX()"><i class="fas fa-sort"></i> Sort</button></div>
-  <textarea id="me" placeholder="Paste emails (one per line) or use Extracted/Upload..." style="min-height:100px"></textarea>
-  <span style="font-size:.66rem;color:var(--dim)" id="mcnt">0 emails</span>
-  <div id="mx-progress" style="display:none;margin-top:.5rem;padding:.5rem .7rem;background:rgba(6,182,212,.08);border-radius:var(--r1);font-size:.72rem;color:var(--cyan)">
-    <div style="display:flex;align-items:center;gap:.5rem"><div class="sp" style="border-color:var(--cyan);border-top-color:transparent"></div><span id="mx-progress-text">Resolving domains...</span></div>
-    <div class="progress-bar" style="margin-top:.4rem"><div class="fill" id="mx-progress-bar" style="width:0%;background:linear-gradient(90deg,#06b6d4,#22d3ee)"></div></div>
-  </div>
-</div>
-
-<!-- Summary Stats (like Electron: classified domains, server types, total emails) -->
-<div class="g4" style="margin:.6rem 0;display:none" id="mx-summary-row">
-  <div class="stat-card"><div class="stat-val" style="color:var(--accent);font-size:1.1rem" id="mx-sum-domains">0</div><div class="stat-lbl">Classified Domains</div></div>
-  <div class="stat-card"><div class="stat-val" style="color:var(--success);font-size:1.1rem" id="mx-sum-types">0</div><div class="stat-lbl">Server Types</div></div>
-  <div class="stat-card"><div class="stat-val" style="color:var(--cyan);font-size:1.1rem" id="mx-sum-emails">0</div><div class="stat-lbl">Total Emails</div></div>
-  <div class="stat-card"><div class="stat-val" style="color:var(--warning);font-size:1.1rem" id="mx-sum-selected">0</div><div class="stat-lbl">Selected</div></div>
-</div>
-<!-- Select All bar + Action buttons (like Electron) -->
-<div style="display:none;align-items:center;gap:.5rem;margin:.4rem 0;padding:.4rem .6rem;background:var(--card);border:1px solid var(--border);border-radius:var(--r1);font-size:.72rem" id="mx-select-bar">
-  <label style="display:flex;align-items:center;gap:.3rem;cursor:pointer"><input type="checkbox" id="mx-select-all" checked onchange="mxToggleAll(this.checked)"><span style="font-weight:600">Select All</span></label>
-  <span style="color:var(--dim)" id="mx-select-info">0 selected</span>
-  <div style="margin-left:auto;display:flex;gap:.3rem">
-    <button class="btn bk bsm" onclick="mxCopySelected()"><i class="fas fa-copy"></i> Copy</button>
-    <button class="btn bk bsm" onclick="mxDlSelected()"><i class="fas fa-download"></i> Export TXT</button>
-  </div>
-</div>
-<!-- Dynamic Provider Cards (built by JS — matches Electron's per-provider cards) -->
-<div style="display:flex;flex-wrap:wrap;gap:.5rem;margin:.6rem 0" id="mx-stats-row"></div>
-
-<!-- STEP 2: Filter -->
-<div class="card" id="mx-filter-card" style="display:none">
-  <div class="card-h"><span><i class="fas fa-filter icon"></i>Step 2: Filter &amp; Clean</span><span style="font-size:.72rem;color:var(--accent);font-weight:700" id="mx-selected-count">0 selected</span></div>
-  <div class="g2">
-    <div>
-      <label>Remove domains (one per line)</label>
-      <textarea id="mx-remove-domains" placeholder="example.com&#10;spam.org" style="min-height:55px;font-size:.72rem"></textarea>
-    </div>
-    <div>
-      <label>Remove containing pattern (one per line)</label>
-      <textarea id="mx-remove-patterns" placeholder="noreply&#10;newsletter&#10;team@" style="min-height:55px;font-size:.72rem"></textarea>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label>Email Address *</label>
+            <input class="form-input" id="accEmail" placeholder="you@domain.com">
+          </div>
+          <div class="form-group">
+            <label>Password *</label>
+            <input class="form-input" id="accPassword" type="password" placeholder="Email password">
+          </div>
+          <div class="form-group">
+            <label>IMAP Host</label>
+            <input class="form-input" id="accImapHost" value="mail.spacemail.com">
+          </div>
+          <div class="form-group">
+            <label>IMAP Port</label>
+            <input class="form-input" id="accImapPort" type="number" value="993">
+          </div>
+          <div class="form-group">
+            <label>SMTP Host</label>
+            <input class="form-input" id="accSmtpHost" value="mail.spacemail.com">
+          </div>
+          <div class="form-group">
+            <label>SMTP Port</label>
+            <input class="form-input" id="accSmtpPort" type="number" value="465">
+          </div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+        <h4 style="font-size:13px;margin-bottom:12px;color:var(--accent)"><i class="fas fa-bullseye"></i> Campaign Settings</h4>
+        <div class="form-group">
+          <label>Campaign Link (URL to include in replies) *</label>
+          <input class="form-input" id="accCampaignLink" placeholder="https://yourdomain.com/schedule">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label>Campaign Name</label>
+            <input class="form-input" id="accCampaignName" value="Default" placeholder="Campaign name">
+          </div>
+          <div class="form-group">
+            <label>Reply Mode</label>
+            <select class="form-select" id="accMode">
+              <option value="approval">Approval (review before send)</option>
+              <option value="auto">Full Auto (send automatically)</option>
+              <option value="paused">Paused (monitoring only)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Persona Name (sign-off name)</label>
+            <input class="form-input" id="accPersonaName" placeholder="Keith Tetreault">
+          </div>
+          <div class="form-group">
+            <label>Persona Title</label>
+            <input class="form-input" id="accPersonaTitle" placeholder="Estimator">
+          </div>
+          <div class="form-group">
+            <label>Min Delay (seconds)</label>
+            <input class="form-input" id="accMinDelay" type="number" value="180">
+          </div>
+          <div class="form-group">
+            <label>Max Delay (seconds)</label>
+            <input class="form-input" id="accMaxDelay" type="number" value="1800">
+          </div>
+        </div>
+        <div id="testResult" style="margin-top:12px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="testAccountConnection()"><i class="fas fa-plug"></i> Test Connection</button>
+        <button class="btn btn-secondary" onclick="closeModal('addAccountModal')">Cancel</button>
+        <button class="btn btn-primary" id="btnSaveAccount" onclick="saveAccount()"><i class="fas fa-save"></i> Save Account</button>
+      </div>
     </div>
   </div>
-  <div style="display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap">
-    <button class="btn bk bsm" onclick="mxApplyFilter()"><i class="fas fa-filter"></i> Apply Filters</button>
-    <button class="btn bk bsm" onclick="mxRemoveDupes()"><i class="fas fa-clone"></i> Remove Dupes</button>
-    <button class="btn bk bsm" onclick="mxRemoveInvalid()"><i class="fas fa-times-circle"></i> Remove Invalid Format</button>
-    <button class="btn bk bsm" onclick="mxCopySelected()"><i class="fas fa-copy"></i> Copy Selected</button>
-    <button class="btn bk bsm" onclick="mxDlSelected()"><i class="fas fa-download"></i> Download TXT</button>
-  </div>
-</div>
 
-<!-- STEP 3: Actions -->
-<div class="card" id="mx-actions-card" style="display:none">
-  <div class="card-h"><span><i class="fas fa-rocket icon"></i>Step 3: Use Results</span></div>
-  <div class="g2" style="margin-bottom:.5rem">
-    <div style="padding:.6rem;background:var(--accent-g);border-radius:var(--r1);text-align:center">
-      <div style="font-size:1.4rem;font-weight:800;color:var(--accent)" id="mx-final-count">0</div>
-      <div style="font-size:.6rem;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">Final email count</div>
-    </div>
-    <div style="padding:.6rem;background:var(--success-g);border-radius:var(--r1)">
-      <div style="font-size:.68rem;color:var(--dim);margin-bottom:.3rem;font-weight:600">Included providers:</div>
-      <div id="mx-final-breakdown" style="font-size:.72rem"></div>
+  <!-- VIEW EMAIL MODAL -->
+  <div class="modal-overlay" id="viewEmailModal">
+    <div class="modal" style="max-width:700px">
+      <div class="modal-header">
+        <h3 id="viewEmailSubject">Email</h3>
+        <button class="btn-ghost" onclick="closeModal('viewEmailModal')"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body" id="viewEmailBody"></div>
+      <div class="modal-footer" id="viewEmailFooter"></div>
     </div>
   </div>
-  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-    <button class="btn bp" onclick="mxUseInCampaign()"><i class="fas fa-paper-plane"></i> Use in Quick Send</button>
-    <button class="btn bs2" onclick="mxSetAsExtracted()"><i class="fas fa-database"></i> Set as Extracted Leads</button>
-    <button class="btn bw" onclick="mxVerifySelected()"><i class="fas fa-check-double"></i> Verify Selected</button>
-    <button class="btn bk" onclick="mxSetAsTest()"><i class="fas fa-flask"></i> Set as Test Leads</button>
-    <button class="btn bd" onclick="mxLaunchCampaign()"><i class="fas fa-rocket"></i> Launch Campaign</button>
-  </div>
-  <!-- Inline campaign launcher -->
-  <div id="mx-campaign-panel" style="display:none;margin-top:.6rem;padding:.8rem;background:var(--card2);border:1px solid var(--border);border-radius:var(--r2)">
-    <div style="font-size:.78rem;font-weight:700;margin-bottom:.5rem"><i class="fas fa-rocket" style="color:var(--accent);margin-right:.3rem"></i>Launch Campaign from MX Results</div>
-    <div class="g2">
-      <div><label>Template</label><select id="mx-camp-tpl" style="flex:1"><option value="">-- No template --</option></select></div>
-      <div><label>Subject</label><input type="text" id="mx-camp-subj" placeholder="Email subject ({{tags}} supported)"></div>
-    </div>
-    <div class="g2" style="margin-top:.3rem">
-      <div><label>Sender Name</label><input type="text" id="mx-camp-sname" placeholder="Display name"></div>
-      <div><label>Reply-To</label><input type="text" id="mx-camp-reply" placeholder="reply@example.com"></div>
-    </div>
-    <div class="sendbar" style="margin-top:.4rem">
-      <div><label>Provider</label><select id="mx-camp-prov"><option value="graph">Graph API</option><option value="ews">EWS SOAP</option><option value="owa">OWA REST</option><option value="auto">Auto Failover</option></select></div>
-      <div><label>Mode</label><select id="mx-camp-mode"><option>TO (individual)</option><option>BCC (multiple per email)</option></select></div>
-      <div><label>Batch</label><input type="number" id="mx-camp-batch" value="190" style="width:65px"></div>
-      <div><label>Delay</label><input type="number" id="mx-camp-delay" value="4" style="width:65px"></div>
-      <button class="btn bp" onclick="mxSendCampaign()"><i class="fas fa-paper-plane"></i> Send <span id="mx-camp-count">0</span> Emails</button>
-    </div>
-    <div id="mx-camp-status" class="rp" style="display:none;margin-top:.4rem"></div>
-  </div>
-</div>
 
-<!-- Results Table -->
-<div class="card" id="mx-results-card" style="display:none">
-  <div class="card-h"><span><i class="fas fa-table icon"></i>Results by Domain</span>
-    <div style="display:flex;gap:.3rem"><input type="text" id="mx-domain-search" placeholder="Search domain..." style="width:150px;font-size:.7rem" oninput="mxFilterDomainTable()"><button class="btn bk bsm" onclick="mxExpandAll()"><i class="fas fa-expand"></i></button></div>
-  </div>
-  <div id="mx-domain-table" style="max-height:400px;overflow-y:auto"></div>
-</div>
-</div></div>
+  <!-- TOAST -->
+  <div class="toast-container" id="toastContainer"></div>
 
-<!-- ═══════ IMAGE EMAIL ═══════ -->
-<div id="p-image-email" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(236,72,153,.12);color:var(--pink)"><i class="far fa-image"></i></div>Image Email</div></div>
-<div class="content">
-<div class="g2">
-  <div class="card"><div class="card-h"><span><i class="fas fa-image icon"></i>Image</span></div><label>Select Image</label><input type="file" id="imgf" accept="image/*"><label style="margin-top:.5rem">Hyperlink URL</label><input type="text" id="imgl" placeholder="https://..."><label style="margin-top:.5rem">Sender Name</label><input type="text" id="img-sname" placeholder="Display name"></div>
-  <div class="card"><div class="card-h"><span><i class="fas fa-envelope icon"></i>Email Details</span></div><label>Subject</label><input type="text" id="imgs" placeholder="Subject (supports {{tags}})"><label style="margin-top:.4rem">Recipients</label>
-    <div class="rg"><label><input type="radio" name="ir" value="test">Test (<span class="tcr">0</span>)</label><label><input type="radio" name="ir" value="extracted">Extracted (<span class="ecr">0</span>)</label><label><input type="radio" name="ir" value="custom" checked>Custom</label></div>
-    <textarea id="imgr" placeholder="email@example.com" style="min-height:45px;margin-top:.2rem"></textarea></div>
-</div>
-<div class="sendbar"><div><label>Mode</label><select id="imgm"><option>BCC (multiple per email)</option><option>TO (individual)</option></select></div><div><label>Batch</label><input type="number" id="imgb" value="99" style="width:65px"></div><div><label>Delay</label><input type="number" id="imgd" value="15" style="width:65px"></div><label class="cb"><input type="checkbox" id="imgft" checked>Footer</label><button class="btn bp" onclick="sendImg()"><i class="fas fa-paper-plane"></i> Send</button></div>
-<div id="imgres" class="rp" style="display:none"></div>
-</div></div>
+  <script>
+    // ═══════════════════════════════════════════
+    // AUTOREPLY ENGINE — Dashboard JS
+    // ═══════════════════════════════════════════
 
-<!-- ═══════ MSG TO IMAGE ═══════ -->
-<div id="p-msg-to-image" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(249,115,22,.12);color:var(--orange)"><i class="fas fa-camera"></i></div>Message to Image</div></div>
-<div class="content">
-<div class="g2">
-  <div class="card"><div class="card-h"><span><i class="fas fa-file-code icon"></i>Template</span><button class="btn bk bsm" onclick="prevM2I()"><i class="fas fa-eye"></i> Preview</button></div><label>Select</label><select id="m2it"><option value="">-- Select --</option></select><label style="margin-top:.5rem">Hyperlink</label><input type="text" id="m2il" placeholder="https://..."><label style="margin-top:.5rem">Sender Name</label><input type="text" id="m2i-sname" placeholder="Display name"></div>
-  <div class="card"><div class="card-h"><span><i class="fas fa-envelope icon"></i>Email Details</span></div><label>Subject</label><input type="text" id="m2is" placeholder="Subject..."><label style="margin-top:.4rem">Recipients</label>
-    <div class="rg"><label><input type="radio" name="m2r" value="test">Test (<span class="tcr">0</span>)</label><label><input type="radio" name="m2r" value="extracted">Extracted (<span class="ecr">0</span>)</label><label><input type="radio" name="m2r" value="custom" checked>Custom</label></div>
-    <textarea id="m2ir" placeholder="email@example.com" style="min-height:45px;margin-top:.2rem"></textarea></div>
-</div>
-<div class="sendbar"><div><label>Batch</label><input type="number" id="m2ib" value="99" style="width:65px"></div><div><label>Delay</label><input type="number" id="m2id" value="15" style="width:65px"></div><label class="cb"><input type="checkbox" id="m2ift" checked>Footer</label><button class="btn bp" onclick="sendM2I()"><i class="fas fa-camera"></i> Convert & Send</button></div>
-<div id="m2ires" class="rp" style="display:none"></div>
-</div></div>
+    const PW = new URLSearchParams(location.search).get('pw') || 'admin123';
+    const API = (path) => `/api${path}${path.includes('?') ? '&' : '?'}pw=${encodeURIComponent(PW)}`;
+    let currentPanel = 'overview';
+    let accountsCache = [];
+    let editingAccountId = null;
 
-<!-- ═══════ ATTACHMENT SEND ═══════ -->
-<div id="p-attachment-send" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(139,92,246,.12);color:var(--purple)"><i class="fas fa-paperclip"></i></div>Attachment Send</div></div>
-<div class="content">
-<div class="g2">
-  <div class="card"><div class="card-h"><span><i class="fas fa-file icon"></i>Files</span></div><button class="btn bk" onclick="$('attf').click()" style="width:100%"><i class="fas fa-plus"></i> Add Files</button><input type="file" id="attf" multiple style="display:none" onchange="showAttF()"><div id="attfl" style="margin-top:.3rem;font-size:.68rem"></div><label style="margin-top:.5rem">Sender Name</label><input type="text" id="att-sname" placeholder="Display name"></div>
-  <div class="card"><div class="card-h"><span><i class="fas fa-envelope icon"></i>Email</span></div><label>Subject</label><input type="text" id="atts" placeholder="Subject (supports {{tags}})"><label style="margin-top:.4rem">Body</label><textarea id="attbdy" placeholder="Optional HTML body..." style="min-height:50px"></textarea><label style="margin-top:.4rem">Recipients</label>
-    <div class="rg"><label><input type="radio" name="ar" value="test">Test (<span class="tcr">0</span>)</label><label><input type="radio" name="ar" value="extracted">Extracted (<span class="ecr">0</span>)</label><label><input type="radio" name="ar" value="custom" checked>Custom</label></div>
-    <textarea id="attr" placeholder="email@example.com" style="min-height:45px;margin-top:.2rem"></textarea></div>
-</div>
-<div class="sendbar"><div><label>Mode</label><select id="attm"><option>BCC (bulk)</option><option>TO (individual)</option><option>BCC (multiple per email)</option></select></div><div><label>Batch</label><input type="number" id="attbs" value="99" style="width:65px"></div><div><label>Delay</label><input type="number" id="attdl" value="15" style="width:65px"></div><label class="cb"><input type="checkbox" id="attft" checked>Footer</label><button class="btn bp" onclick="sendAtt()"><i class="fas fa-paper-plane"></i> Send</button></div>
-<div id="attres" class="rp" style="display:none"></div>
-</div></div>
-
-<!-- ═══════ ANALYTICS ═══════ -->
-<div id="p-analytics" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:var(--accent-g);color:var(--accent)"><i class="fas fa-chart-bar"></i></div>Analytics</div>
-<div class="topbar-right"><button class="btn bk bsm" onclick="loadAnalytics()"><i class="fas fa-sync"></i> Refresh</button><button class="btn bd bsm" onclick="resetAnalytics()"><i class="fas fa-trash"></i> Reset</button></div></div>
-<div class="content">
-  <div class="g4" style="margin-bottom:1rem">
-    <div class="stat-card"><div class="stat-val" style="color:var(--success)" id="a-sent">0</div><div class="stat-lbl">Total Sent</div></div>
-    <div class="stat-card"><div class="stat-val" style="color:var(--danger)" id="a-failed">0</div><div class="stat-lbl">Total Failed</div></div>
-    <div class="stat-card"><div class="stat-val" style="color:var(--accent)" id="a-today-sent">0</div><div class="stat-lbl">Sent Today</div></div>
-    <div class="stat-card"><div class="stat-val" style="color:var(--warning)" id="a-7d-sent">0</div><div class="stat-lbl">Last 7 Days</div></div>
-  </div>
-  <div class="g2" style="margin-bottom:1rem">
-    <div class="chart-box"><div class="card-h"><span>Send Volume (Last 14 Days)</span></div><canvas id="chart-daily" height="180"></canvas></div>
-    <div class="chart-box"><div class="card-h"><span>By Provider</span></div><canvas id="chart-provider" height="180"></canvas></div>
-  </div>
-  <div class="card"><div class="card-h"><span><i class="fas fa-users icon"></i>Per Account</span></div><table class="table" id="a-acct-table"><thead><tr><th>Account</th><th>Sent</th><th>Failed</th><th>Rate</th></tr></thead><tbody></tbody></table></div>
-</div></div>
-
-<!-- ═══════ SETTINGS ═══════ -->
-<div id="p-settings" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(255,255,255,.05);color:var(--dim)"><i class="fas fa-cog"></i></div>Settings</div>
-<div class="topbar-right"><button class="btn bp" onclick="saveSets()"><i class="fas fa-save"></i> Save All</button></div></div>
-<div class="content">
-<div class="card ss"><h3><i class="fas fa-link" style="color:var(--cyan)"></i> Newsletter Admin URL</h3>
-  <p style="font-size:.68rem;color:var(--dim);margin-bottom:.3rem">Set the URL of your newsletter admin panel to load tokens from. No default — you must enter your URL.</p>
-  <div style="display:flex;gap:.3rem"><input type="text" id="set-admin-url" placeholder="https://your-admin.pages.dev" style="flex:1"><button class="btn bp bsm" onclick="saveAdminUrl()"><i class="fas fa-save"></i> Save URL</button><button class="btn bk bsm" onclick="testAdminUrl()"><i class="fas fa-wifi"></i> Test</button></div>
-  <div id="admin-url-status" style="font-size:.68rem;color:var(--dim);margin-top:.3rem"></div>
-</div>
-<div class="card ss"><h3><i class="fas fa-server" style="color:var(--accent)"></i> Send Provider</h3>
-  <div class="g3"><div><label>Default Provider</label><select id="set-provider"><option value="graph">Graph API</option><option value="ews">EWS SOAP</option><option value="owa">OWA REST</option><option value="auto">Auto Failover</option></select></div>
-  <div><label>Default Sender Name</label><input type="text" id="set-sender-name" placeholder="Display name"></div>
-  <div><label>Default Reply-To</label><input type="text" id="set-reply-to" placeholder="reply@example.com"></div></div>
-</div>
-<div class="card ss"><h3><i class="fas fa-sync-alt" style="color:var(--purple)"></i> Account Rotation</h3>
-  <label class="cb"><input type="checkbox" id="set-rot-enabled">Enable account rotation</label>
-  <div class="ig" style="margin-top:.4rem"><div><label>Strategy</label><select id="set-rot-strategy"><option value="round-robin">Round Robin</option><option value="random">Random</option><option value="least-used">Least Used</option></select></div><div><label>Max per Account</label><input type="number" id="set-rot-max" value="500"></div><div><label>Cooldown (min)</label><input type="number" id="set-rot-cooldown" value="30"></div></div>
-</div>
-<div class="card ss"><h3><i class="fas fa-tachometer-alt" style="color:var(--cyan)"></i> Rate Limiting</h3>
-  <label class="cb"><input type="checkbox" id="set-throttle-enabled" checked>Enable throttling</label>
-  <div class="ig" style="margin-top:.4rem"><div><label>Max / Minute</label><input type="number" id="set-throttle-min" value="30"></div><div><label>Max / Hour</label><input type="number" id="set-throttle-hour" value="500"></div><div><label>Max / Day</label><input type="number" id="set-throttle-day" value="5000"></div></div>
-</div>
-<div class="card ss"><h3><i class="fas fa-user-shield" style="color:var(--success)"></i> Anti-Flagging Protection</h3>
-  <p style="font-size:.68rem;color:var(--dim);margin-bottom:.4rem">Protect your accounts from being flagged by Microsoft. Randomizes timing, varies headers, and auto-pauses on errors.</p>
-  <label class="cb"><input type="checkbox" id="set-af-enabled" checked>Enable anti-flagging protection</label>
-  <div class="g2" style="margin-top:.4rem">
-    <div>
-      <label class="cb"><input type="checkbox" id="set-af-jitter" checked>Random delay jitter</label>
-      <div class="ig" style="margin-top:.3rem"><div><label>Min Multiplier</label><input type="number" id="set-af-jmin" value="0.7" step="0.1" style="width:80px"></div><div><label>Max Multiplier</label><input type="number" id="set-af-jmax" value="1.8" step="0.1" style="width:80px"></div></div>
-      <p style="font-size:.6rem;color:var(--dim);margin-top:.2rem">If delay=4s: sends between 2.8s-7.2s (0.7x-1.8x)</p>
-    </div>
-    <div>
-      <label class="cb"><input type="checkbox" id="set-af-autostop" checked>Auto-pause on error spikes</label>
-      <div style="margin-top:.3rem"><label>Max Consecutive Errors</label><input type="number" id="set-af-maxerr" value="3" style="width:80px"></div>
-      <p style="font-size:.6rem;color:var(--dim);margin-top:.2rem">Pauses campaign if this many errors in a row</p>
-    </div>
-  </div>
-  <div class="g2" style="margin-top:.4rem">
-    <div><label>Daily Limit per Account</label><input type="number" id="set-af-dailylimit" value="500" style="width:100px"><p style="font-size:.6rem;color:var(--dim);margin-top:.2rem">Max emails per account per day</p></div>
-    <div>
-      <label class="cb"><input type="checkbox" id="set-af-headers" checked>Header variation (X-Mailer randomization)</label>
-      <label class="cb" style="margin-top:.2rem"><input type="checkbox" id="set-af-humanize" checked>Humanize timing (micro-delays)</label>
-    </div>
-  </div>
-</div>
-<div class="card ss"><h3><i class="fas fa-file-alt" style="color:var(--orange)"></i> Email Footer</h3>
-  <label class="cb"><input type="checkbox" id="sfe" checked>Enable footer</label>
-  <label style="margin-top:.3rem">Footer HTML</label><textarea id="sfh" placeholder="<div>Footer HTML...</div>" style="min-height:70px;font-family:'Courier New',monospace;font-size:.72rem"></textarea>
-  <div class="ig" style="margin-top:.3rem"><div><label>Empty Lines Before</label><input type="number" id="sfl" value="10" style="width:70px"></div></div>
-  <label class="cb" style="margin-top:.3rem"><input type="checkbox" id="sfhid">Hide footer (invisible)</label>
-</div>
-<div class="card ss"><h3><i class="fas fa-envelope icon" style="color:var(--accent)"></i> Default Send Settings</h3>
-  <div class="ig"><div><label>Default Mode</label><select id="sdm"><option>TO (individual)</option><option>BCC (multiple per email)</option><option>BCC (bulk)</option></select></div><div><label>Batch Size</label><input type="number" id="sdbs" value="190"></div><div><label>Delay (sec)</label><input type="number" id="sddl" value="4"></div></div>
-  <div style="margin-top:.4rem"><label>BCC Primary Recipient</label><input type="text" id="sbcc" placeholder="your-email@example.com"></div>
-  <label class="cb" style="margin-top:.3rem"><input type="checkbox" id="ssent">Save to Sent folder</label>
-</div>
-<div class="card ss"><h3><i class="fas fa-globe" style="color:var(--cyan)"></i> Proxy</h3>
-  <label class="cb"><input type="checkbox" id="spe">Enable proxy</label>
-  <div class="ig" style="margin-top:.3rem"><div style="flex:3"><label>Host</label><input type="text" id="sph" placeholder="host"></div><div style="flex:1"><label>Port</label><input type="number" id="spp" placeholder="port"></div></div>
-  <div class="ig" style="margin-top:.3rem"><div><label>Username</label><input type="text" id="spu"></div><div><label>Password</label><input type="password" id="spw"></div></div>
-  <button class="btn bk bsm" style="margin-top:.4rem" onclick="testProxy()"><i class="fas fa-wifi"></i> Test</button>
-</div>
-<div class="card ss"><h3><i class="fas fa-shield-alt" style="color:var(--success)"></i> Spam Bypass</h3>
-  <label class="cb"><input type="checkbox" id="sse" checked>Enable</label>
-  <div class="ckg" style="margin-top:.3rem">
-    <label class="cb"><input type="checkbox" id="ssi" checked>Invisible text</label><label class="cb"><input type="checkbox" id="ssh" checked>HTML comments</label>
-    <label class="cb"><input type="checkbox" id="ssz" checked>Zero-width chars</label><label class="cb"><input type="checkbox" id="ssv" checked>Vary structure</label>
-    <label class="cb"><input type="checkbox" id="ssc" checked>Randomize CSS</label><label class="cb"><input type="checkbox" id="ssm" checked>Random meta tags</label>
-  </div>
-</div>
-<div class="card ss"><h3><i class="fas fa-exclamation-triangle" style="color:var(--warning)"></i> Error Handling</h3>
-  <label class="cb"><input type="checkbox" id="sec" checked>Continue on error</label>
-  <label class="cb"><input type="checkbox" id="ser" checked>Retry failed</label>
-  <div class="ig" style="margin-top:.3rem"><div><label>Max Retries</label><input type="number" id="semr" value="2"></div><div><label>Retry Delay</label><input type="number" id="serd" value="5"></div><div><label>Max Concurrent</label><input type="number" id="semc" value="3"></div></div>
-</div>
-<div class="card ss"><h3><i class="fas fa-code" style="color:var(--pink)"></i> Custom Variables</h3>
-  <p style="font-size:.68rem;color:var(--dim);margin-bottom:.3rem">Use in templates: <span class="tag tag-c">{{company}}</span> <span class="tag tag-c">{{website}}</span> <span class="tag tag-c">{{phone}}</span></p>
-  <div class="ig"><div><label>Company</label><input type="text" id="cvco"></div><div><label>Website</label><input type="text" id="cvwb"></div><div><label>Phone</label><input type="text" id="cvph"></div></div>
-  <div class="ig" style="margin-top:.3rem"><div><label>Address</label><input type="text" id="cvad"></div><div><label>Custom 1</label><input type="text" id="cv1"></div><div><label>Custom 2</label><input type="text" id="cv2"></div></div>
-</div>
-</div></div>
-
-<!-- ═══════ LOGS ═══════ -->
-<div id="p-logs" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(255,255,255,.05);color:var(--dim)"><i class="fas fa-scroll"></i></div>Delivery Logs</div>
-<div class="topbar-right"><button class="btn bk bsm" onclick="loadLogs()"><i class="fas fa-sync"></i></button><a class="btn bk bsm" href="/api/logs/export" download><i class="fas fa-download"></i> CSV</a><button class="btn bd bsm" onclick="clearLogs()"><i class="fas fa-trash"></i></button></div></div>
-<div class="content"><table class="table" id="log-table"><thead><tr><th>Time</th><th>Campaign</th><th>Total</th><th>Sent</th><th>Failed</th><th>Mode</th><th>Subject</th></tr></thead><tbody id="log-body"></tbody></table></div>
-</div>
-
-<!-- ═══════ DEPLOY ═══════ -->
-<div id="p-deploy" class="page">
-<div class="topbar"><div class="page-title"><div class="icon" style="background:rgba(99,102,241,.12);color:var(--accent)"><i class="fas fa-cloud-upload-alt"></i></div>Deployment Manager</div>
-<div class="topbar-right"><span class="topbar-badge" id="deploy-master-badge" style="background:var(--success-g);color:var(--success)"><i class="fas fa-crown"></i> Master</span></div></div>
-
-<div class="content">
-<!-- Master Status -->
-<div class="g2">
-<div class="card">
-  <div class="card-h"><span><i class="fas fa-server icon"></i>Master Instance</span></div>
-  <div class="ig">
-    <div><label>Status</label><span id="dep-status" style="font-weight:700;color:var(--success)">Active</span></div>
-    <div><label>Version</label><span id="dep-version" style="font-weight:700">--</span></div>
-  </div>
-  <div style="margin-top:.8rem;display:flex;gap:.4rem;flex-wrap:wrap">
-    <button class="btn bs2 bsm" onclick="deploySnapshot()"><i class="fas fa-camera"></i> Take Snapshot</button>
-    <button class="btn bk bsm" onclick="deployCheckSnapshot()"><i class="fas fa-info-circle"></i> Snapshot Info</button>
-    <button class="btn bp bsm" onclick="deployUploadWorker()"><i class="fas fa-upload"></i> Upload Worker.js</button>
-    <input type="file" id="worker-upload" accept=".js" style="display:none" onchange="deployHandleWorkerUpload(this)">
-  </div>
-  <div id="dep-snapshot-info" style="margin-top:.5rem;font-size:.7rem;color:var(--dim)"></div>
-</div>
-
-<div class="card">
-  <div class="card-h"><span><i class="fas fa-plus-circle icon"></i>Register Child Account</span></div>
-  <div><label>Project Name <span style="color:var(--danger)">*</span></label><input type="text" id="dep-proj" placeholder="e.g. token-sender-client1"></div>
-  <div style="margin-top:.3rem"><label>Cloudflare Account ID <span style="color:var(--danger)">*</span></label><input type="text" id="dep-acctid" placeholder="Account ID from CF dashboard"></div>
-  <div style="margin-top:.3rem"><label>API Token <span style="color:var(--danger)">*</span></label><input type="password" id="dep-token" placeholder="CF API token with Pages Edit permission"></div>
-  <div style="margin-top:.3rem"><label>Owner Email</label><input type="text" id="dep-email" placeholder="client@example.com (optional)"></div>
-  <button class="btn bp" style="margin-top:.6rem;width:100%" onclick="deployRegisterChild()"><i class="fas fa-plus"></i> Register Child</button>
-</div>
-</div>
-
-<!-- Push Controls -->
-<div class="card">
-  <div class="card-h"><span><i class="fas fa-rocket icon"></i>Push Update</span>
-    <div style="display:flex;gap:.3rem">
-      <button class="btn bp bsm" onclick="deployPushAll()"><i class="fas fa-globe"></i> Push to All</button>
-      <button class="btn bk bsm" onclick="deployRefreshChildren()"><i class="fas fa-sync"></i> Refresh</button>
-    </div>
-  </div>
-  <div id="dep-push-status" style="display:none;margin-bottom:.6rem;padding:.6rem;border-radius:var(--r1);font-size:.72rem;"></div>
-  <table class="table" id="dep-children-table">
-    <thead><tr><th>Project</th><th>Account</th><th>Status</th><th>Version</th><th>Last Deployed</th><th>URL</th><th>Actions</th></tr></thead>
-    <tbody id="dep-children-body"></tbody>
-  </table>
-  <div id="dep-children-empty" class="empty-state" style="display:none"><i class="fas fa-cloud"></i>No child deployments registered. Add one above.</div>
-</div>
-
-<!-- Deploy Log -->
-<div class="card">
-  <div class="card-h"><span><i class="fas fa-terminal icon"></i>Deploy Log</span><button class="btn bk bsm" onclick="$('dep-log').innerHTML=''"><i class="fas fa-trash"></i></button></div>
-  <div id="dep-log" style="max-height:200px;overflow-y:auto;font-family:'Courier New',monospace;font-size:.68rem;color:var(--dim);background:var(--inp);border-radius:var(--r1);padding:.6rem;"></div>
-</div>
-</div>
-</div>
-
-</div><!-- main -->
-
-<!-- MODALS -->
-<div class="modal" id="emod"><div class="mc"><div class="mh"><span id="etit">Edit Template</span><div style="display:flex;gap:.3rem"><button class="btn bp bsm" onclick="saveTpl()"><i class="fas fa-save"></i> Save</button><button class="btn bk bsm" onclick="clsE()"><i class="fas fa-times"></i></button></div></div><div class="mb"><input type="text" id="ename" placeholder="template_name.html" style="margin-bottom:.3rem"><textarea id="econt" style="min-height:400px;font-family:'Courier New',monospace;font-size:.74rem"></textarea></div></div></div>
-<div class="modal" id="pmod"><div class="mc"><div class="mh"><span>Preview</span><button class="btn bk bsm" onclick="clsP()"><i class="fas fa-times"></i></button></div><div class="mb"><iframe id="pfrm" class="pf"></iframe></div></div></div>
-
-</div><!-- /app-container -->
-
-<script>
-const $=id=>document.getElementById(id);
-function toast(m,t='ts'){const e=document.createElement('div');e.className='toast '+t;e.innerHTML=(t==='ts'?'<i class="fas fa-check-circle"></i>':t==='te'?'<i class="fas fa-times-circle"></i>':'<i class="fas fa-exclamation-triangle"></i>')+' '+m;document.body.appendChild(e);setTimeout(()=>e.remove(),3500);}
-async function api(p,o={}){const c={headers:{'Content-Type':'application/json'},...o};if(o.body&&typeof o.body==='object'&&!(o.body instanceof FormData))c.body=JSON.stringify(o.body);if(o.body instanceof FormData){delete c.headers['Content-Type'];c.body=o.body;}const r=await fetch(p,c);const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');return d;}
-
-// ═══ NAV ═══
-function sp(p){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.ni').forEach(x=>x.classList.remove('active'));$('p-'+p)?.classList.add('active');document.querySelector('[data-page="'+p+'"]')?.classList.add('active');
-if(p==='templates')ldTpls();if(p==='settings')ldSets();if(p==='accounts')loadAccounts();if(p==='campaigns')loadCampaigns();if(p==='analytics')loadAnalytics();if(p==='logs')loadLogs();if(p==='deploy')loadDeployPage();}
-
-// ═══ DASHBOARD STATS ═══
-async function loadDashStats(){try{const s=await api('/api/analytics/summary');$('ds-sent').textContent=s.total.sent;$('ds-failed').textContent=s.total.failed;$('ds-today').textContent='+'+s.today.sent+' today';$('ds-accounts').textContent=s.totalAccounts;$('ds-acct-sub').textContent=s.activeAccounts+' active';$('ds-campaigns').textContent=s.activeCampaigns+' running';}catch{}}
-
-// ═══ AUTH / ACTIVE ACCOUNT ═══
-async function chkAuth(){try{const d=await api('/api/accounts/active');if(d.authenticated){$('ae').textContent=d.email;$('an').textContent=d.name;$('ax').textContent=d.expiresIn;$('ap').textContent=d.provider?.toUpperCase();$('asc').textContent=d.sendCount;$('tb-email').textContent=d.email;$('auth-badge').style.background='var(--success-g)';$('auth-badge').style.color='var(--success)';$('qs-prov').value=d.provider||'graph';}else{$('ae').textContent='--';$('an').textContent='--';$('ax').textContent='--';$('ap').textContent='--';$('asc').textContent='0';$('tb-email').textContent='No account';$('auth-badge').style.background='var(--danger-g)';$('auth-badge').style.color='var(--danger)';}}catch{}}
-async function refTkList(){
-  const url=TOKEN_SRC();
-  if(!url){toast('Set your Newsletter Admin URL first','te');return;}
-  try{
-    toast('Fetching tokens from '+url+'...','tw');
-    const d=await api('/api/auth/available-tokens');
-    const html=(d.tokens||d||[]).map(t=>'<option value="'+t.id+'">'+(t.email||t.name||t.id)+(t.isExpired?' (EXPIRED)':'')+'</option>').join('');
-    $('ts').innerHTML='<option value="">Select token...</option>'+html;
-    $('acct-tk-select').innerHTML='<option value="">Select token...</option>'+html;
-    toast('Found '+(d.tokens||d||[]).length+' tokens');
-  }catch(e){toast('Failed to fetch tokens: '+e.message,'te');}
-}
-function TOKEN_SRC(){return $('admin-url')?.value||$('acct-admin-url')?.value||$('set-admin-url')?.value||'';}
-async function saveAdminUrl(){
-  const url=$('admin-url')?.value||$('acct-admin-url')?.value||$('set-admin-url')?.value||'';
-  if(!url){toast('Enter an admin URL first','te');return;}
-  try{
-    await api('/api/token-source',{method:'PUT',body:{url}});
-    // Sync all admin URL fields
-    if($('admin-url'))$('admin-url').value=url;
-    if($('acct-admin-url'))$('acct-admin-url').value=url;
-    if($('set-admin-url'))$('set-admin-url').value=url;
-    toast('Admin URL saved: '+url);
-  }catch(e){toast(e.message,'te');}
-}
-async function testAdminUrl(){
-  const url=$('set-admin-url')?.value||$('admin-url')?.value||'';
-  if(!url){toast('Enter a URL first','te');return;}
-  const st=$('admin-url-status');
-  st.textContent='Testing...';st.style.color='var(--warning)';
-  try{
-    const resp=await fetch(url+'/api/electron/list-tokens');
-    if(resp.ok){const d=await resp.json();st.textContent='Connected! Found '+(d.tokens||d||[]).length+' tokens';st.style.color='var(--success)';toast('Admin URL working!');}
-    else{st.textContent='Error: Server returned '+resp.status;st.style.color='var(--danger)';toast('Admin URL returned error '+resp.status,'te');}
-  }catch(e){st.textContent='Failed: '+e.message;st.style.color='var(--danger)';toast('Cannot reach admin URL','te');}
-}
-async function loadAdminUrl(){try{const d=await api('/api/token-source');if(d.url){if($('admin-url'))$('admin-url').value=d.url;if($('acct-admin-url'))$('acct-admin-url').value=d.url;if($('set-admin-url'))$('set-admin-url').value=d.url;}}catch{}}
-async function loadTk(){const id=$('ts').value;if(!id)return toast('Select a token','te');const url=TOKEN_SRC();if(!url)return toast('Set your Newsletter Admin URL first','te');try{toast('Loading token...','tw');await api('/api/auth/from-source',{method:'POST',body:{tokenId:parseInt(id)}});chkAuth();loadDashStats();toast('Token loaded & account added');}catch(e){toast(e.message,'te');}}
-
-// ═══ ACCOUNTS ═══
-async function loadAccounts(){try{const accts=await api('/api/accounts');let active=0,restricted=0,totalSends=0;const el=$('acct-list');
-if(!accts.length){el.innerHTML='<div class="empty-state" style="grid-column:1/-1"><i class="fas fa-users"></i>No accounts loaded. Use token source above or paste a refresh token.</div>';$('acct-active').textContent='0';$('acct-restricted').textContent='0';$('acct-total-sends').textContent='0';return;}
-el.innerHTML=accts.map(a=>{const colors=['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#f97316'];const color=colors[Math.abs(hashStr(a.email))%colors.length];const isActive=a.isActive;if(a.status==='active')active++;else restricted++;totalSends+=a.sendCount||0;
-return`<div class="acct-card ${isActive?'active-acct':''}"><div class="acct-avatar" style="background:${color}">${(a.email||'?')[0].toUpperCase()}</div><div class="acct-info"><div class="acct-email">${a.email||'Unknown'}${isActive?' <span class="pill pill-info">ACTIVE</span>':''}</div><div class="acct-meta"><span><i class="fas fa-paper-plane"></i> ${a.sendCount||0}</span><span class="status-dot status-${a.status||'active'}"></span>${a.status||'active'}${a.lastUsed?' <span>Last: '+timeAgo(a.lastUsed)+'</span>':''}</div></div><div class="acct-actions"><button class="btn bp bsm" onclick="setActiveAcct('${a.id}')" title="Set Active"><i class="fas fa-check"></i></button><button class="btn bk bsm" onclick="testAcct('${a.id}')" title="Test"><i class="fas fa-flask"></i></button><button class="btn bk bsm" onclick="resetAcctCount('${a.id}')" title="Reset Count"><i class="fas fa-redo"></i></button><button class="btn bd bsm" onclick="removeAcct('${a.id}')" title="Remove"><i class="fas fa-trash"></i></button></div></div>`}).join('');
-$('acct-active').textContent=active;$('acct-restricted').textContent=restricted;$('acct-total-sends').textContent=totalSends;}catch(e){toast(e.message,'te');}}
-function hashStr(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return Math.abs(h);}
-function timeAgo(d){const s=Math.floor((Date.now()-new Date(d))/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
-async function setActiveAcct(id){try{await api('/api/accounts/set-active',{method:'POST',body:{accountId:id}});chkAuth();loadAccounts();toast('Active account changed');}catch(e){toast(e.message,'te');}}
-async function testAcct(id){try{toast('Testing providers...','tw');const d=await api('/api/accounts/'+id+'/test',{method:'POST'});toast(`${d.email}: Graph=${d.providers.graph?'OK':'FAIL'} EWS=${d.providers.ews?'OK':'FAIL'} OWA=${d.providers.owa?'OK':'FAIL'}`);}catch(e){toast(e.message,'te');}}
-async function resetAcctCount(id){await api('/api/accounts/'+id+'/reset-count',{method:'POST'});loadAccounts();toast('Count reset');}
-async function removeAcct(id){if(!confirm('Remove this account?'))return;await api('/api/accounts/'+id,{method:'DELETE'});chkAuth();loadAccounts();toast('Removed');}
-async function addFromSource(){const id=$('acct-tk-select').value;if(!id)return toast('Select a token','te');const url=TOKEN_SRC();if(!url)return toast('Set your Newsletter Admin URL first','te');try{toast('Adding account...','tw');const d=await api('/api/accounts/add-from-source',{method:'POST',body:{tokenId:parseInt(id)}});chkAuth();loadAccounts();toast('Added: '+d.email);}catch(e){toast(e.message,'te');}}
-function showAddAccount(){const rt=prompt('Paste refresh token:');if(!rt)return;api('/api/accounts/add-manual',{method:'POST',body:{refreshToken:rt}}).then(d=>{chkAuth();loadAccounts();toast('Added: '+d.email);}).catch(e=>toast(e.message,'te'));}
-
-// ═══ LEADS ═══
-async function extractLeads(){
-  const btn=$('extract-btn');const prog=$('extract-progress');const status=$('extract-status');const bar=$('extract-bar');
-  const stats=$('extract-stats');const pctEl=$('extract-pct');
-  btn.disabled=true;btn.innerHTML='<div class="sp" style="width:12px;height:12px;border-width:2px"></div> Extracting...';
-  prog.style.display='block';stats.style.display='none';status.textContent='Connecting to mailbox...';bar.style.width='5%';pctEl.textContent='';
-  try{
-    const resp=await fetch('/api/leads/extract-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-    if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error||'Extract failed ('+resp.status+')');}
-    const reader=resp.body.getReader();const decoder=new TextDecoder();let buf='';
-    while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      buf+=decoder.decode(value,{stream:true});
-      const lines=buf.split('\n');buf=lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data: '))continue;
-        try{
-          const d=JSON.parse(line.slice(6));
-          if(d.phase)status.textContent=d.phase;
-          if(d.progress!=null){const p=Math.min(d.progress,100);bar.style.width=p+'%';pctEl.textContent=p+'%';}
-          if(d.found!=null)$('lc').textContent=d.found;
-          // Show Electron 2.2-style extraction stats
-          if(d.currentFolder||d.completedFolders!=null){
-            stats.style.display='grid';
-            if(d.currentFolder)$('es-folder').textContent=d.currentFolder;
-            if(d.extractedMsgs!=null)$('es-extracted').textContent=Number(d.extractedMsgs).toLocaleString();
-            if(d.totalMessages!=null)$('es-total').textContent=Number(d.totalMessages).toLocaleString();
-            if(d.completedFolders!=null&&d.totalFolders)$('es-folders').textContent=d.completedFolders+' / '+d.totalFolders;
-          }
-          if(d.done){
-            bar.style.width='100%';pctEl.textContent='100%';
-            const el=d.elapsed?` in ${d.elapsed}s`:'';const tw=d.timedOut?' (hit 5min limit - extract again for more)':'';
-            status.textContent=`Done! ${d.total} total emails from ${d.foldersScanned}/${d.totalFolders} folders. ${d.newCount} new${el}${tw}`;
-            $('lc').textContent=d.total;
-            if(d.extractedMsgs)$('es-extracted').textContent=Number(d.extractedMsgs).toLocaleString();
-            updLC();
-            toast(`Extracted ${d.newCount} new leads (${d.total} total)${el}${tw}`);
-            setTimeout(()=>{prog.style.display='none';stats.style.display='none';},8000);
-          }
-          if(d.error){status.textContent='Error: '+d.error;toast(d.error,'te');stats.style.display='none';}
-        }catch{}
-      }
+    // ─── Init ───
+    async function init() {
+      await loadStats();
+      await loadActivity();
+      await loadApprovalQueue();
+      await loadAccounts();
+      checkEngineStatus();
+      // Refresh every 15s
+      setInterval(() => {
+        loadStats();
+        checkEngineStatus();
+        if (currentPanel === 'approval') loadApprovalQueue();
+      }, 15000);
     }
-  }catch(e){toast(e.message,'te');status.textContent='Error: '+e.message;}
-  btn.disabled=false;btn.innerHTML='<i class="fas fa-download"></i> Extract';updLC();
-}
-function dlLeads(){api('/api/leads').then(d=>{const b=new Blob([d.extracted.join('\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='leads_'+Date.now()+'.txt';a.click();});}
-async function clrLeads(){await api('/api/leads/clear',{method:'DELETE'});$('lc').textContent='0';updLC();toast('Cleared');}
-async function updLC(){try{const d=await api('/api/leads');const ec=d.extracted?.length||0;const tc=d.test?.length||0;$('lc').textContent=ec;$('tc').textContent=tc;$('ec').textContent=ec;document.querySelectorAll('.tcr').forEach(e=>e.textContent=tc);document.querySelectorAll('.ecr').forEach(e=>e.textContent=ec);}catch{}}
-document.querySelectorAll('input[name="sr"]').forEach(r=>r.addEventListener('change',()=>{$('srx').style.display=r.value==='custom'?'block':'none';$('srf').style.display=r.value==='file'?'block':'none';}));
-function ldRF(i){const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{$('srx').value=e.target.result;$('srx').style.display='block';};r.readAsText(f);}
-async function getRec(pfx){const sel=document.querySelector('input[name="'+pfx+'"]:checked')?.value||'custom';if(sel==='custom'||sel==='file'){const tid={sr:'srx',ir:'imgr',m2r:'m2ir',ar:'attr'}[pfx]||'srx';return $(tid).value.split('\n').map(e=>e.trim()).filter(e=>e.includes('@'));}const d=await api('/api/leads');return sel==='test'?d.test||[]:d.extracted||[];}
 
-// ═══ QUICK SEND ═══
-async function sendEmails(){try{const rec=await getRec('sr');if(!rec.length)return toast('No recipients','te');const sub=$('ss2').value;if(!sub)return toast('Subject required','te');$('si').classList.add('active');$('sres').style.display='none';
-const d=await api('/api/send',{method:'POST',body:{recipients:rec,subject:sub,templateName:$('st').value||undefined,mode:$('sm').value,batchSize:parseInt($('sb').value),delay:parseInt($('sd').value),appendFooter:$('sf').checked,senderName:$('qs-sname').value,replyTo:$('qs-reply').value}});
-$('si').classList.remove('active');const p=$('sres');p.style.display='block';p.textContent='Campaign started: '+d.campaignId+'\nStatus: '+d.status+'\nTotal: '+d.total+'\n\nPolling for progress...';
-if(d.campaignId)pollCampaign(d.campaignId,'sres');toast('Campaign started!');}catch(e){$('si').classList.remove('active');toast(e.message,'te');}}
-async function pollCampaign(id,resId){const el=$(resId);let done=false;while(!done){await new Promise(w=>setTimeout(w,2000));try{const c=await api('/api/campaigns/'+id);let txt='Campaign: '+c.name+'\nStatus: '+c.status+'\nProgress: '+c.sent+'/'+c.total+' sent, '+c.failed+' failed\n';if(c.total>0){const pct=Math.round(((c.sent+c.failed)/c.total)*100);txt+=progressText(pct)+'\n';}txt+='\nResults:\n';(c.results||[]).slice(-50).forEach(r=>{txt+=(r.success?'[OK]':'[FAIL]')+' '+(r.recipient||r.batch||'')+(r.error?' - '+r.error:'')+' ('+(r.account||'')+') '+timeAgo(r.timestamp)+'\n';});
-el.textContent=txt;if(c.status==='completed'||c.status==='error'||c.status==='paused')done=true;}catch{done=true;}}loadDashStats();}
-function progressText(pct){const filled=Math.round(pct/2.5);const empty=40-filled;return'['+'\u2588'.repeat(filled)+'\u2591'.repeat(empty)+'] '+pct+'%';}
-
-// ═══ CAMPAIGNS ═══
-async function loadCampaigns(){try{const d=await api('/api/campaigns');const camps=d.campaigns||[];$('camp-empty').style.display=camps.length?'none':'block';let running=0;
-$('camp-list').innerHTML=camps.map(c=>{if(c.status==='running')running++;const pct=c.total>0?Math.round(((c.sent+c.failed)/c.total)*100):0;return`<div class="card" style="margin-bottom:.5rem"><div style="display:flex;justify-content:space-between;align-items:center"><div><span style="font-weight:700;font-size:.82rem">${c.name||c.id}</span> <span class="camp-status camp-${c.status}">${c.status}</span></div><div style="display:flex;gap:.3rem">${c.status==='running'?'<button class="btn bw bsm" onclick="pauseCamp(\''+c.id+'\')"><i class="fas fa-pause"></i></button>':''}${c.status==='paused'||c.status==='draft'?'<button class="btn bs2 bsm" onclick="resumeCamp(\''+c.id+'\')"><i class="fas fa-play"></i></button>':''}<button class="btn bd bsm" onclick="delCamp(\''+c.id+'\')"><i class="fas fa-trash"></i></button></div></div><div style="font-size:.68rem;color:var(--dim);margin-top:.2rem">${c.subject||''} | ${c.mode||''} | ${timeAgo(c.createdAt)}</div><div class="progress-bar"><div class="fill fill-success" style="width:${pct}%"></div></div><div style="font-size:.66rem;color:var(--dim);margin-top:.2rem">Sent: ${c.sent}/${c.total} | Failed: ${c.failed} | ${pct}%</div></div>`}).join('');
-const badge=$('camp-badge');if(running>0){badge.textContent=running;badge.style.display='inline';}else badge.style.display='none';}catch(e){toast(e.message,'te');}}
-async function pauseCamp(id){await api('/api/campaigns/'+id+'/pause',{method:'POST'});loadCampaigns();toast('Paused');}
-async function resumeCamp(id){await api('/api/campaigns/'+id+'/resume',{method:'POST'});loadCampaigns();toast('Resumed');}
-async function delCamp(id){if(!confirm('Delete?'))return;await api('/api/campaigns/'+id,{method:'DELETE'});loadCampaigns();toast('Deleted');}
-function showNewCampaign(){sp('dashboard');}
-
-// ═══ TEMPLATES ═══
-async function ldTpls(){try{const t=await api('/api/templates');$('tl').innerHTML=t.length?t.map(x=>`<div class="tc2"><div class="nm">${x.name}</div><div class="ty">${x.type} &bull; ${Math.round(x.size/1024)}KB</div><div class="act"><button class="btn bk bsm" onclick="prevTpl('${x.name}')"><i class="fas fa-eye"></i></button><button class="btn bk bsm" onclick="editTpl('${x.name}')"><i class="fas fa-edit"></i></button><button class="btn bd bsm" onclick="delTpl('${x.name}')"><i class="fas fa-trash"></i></button></div></div>`).join(''):'<div class="empty-state"><i class="far fa-file-code"></i>No templates. Create one!</div>';
-const opts='<option value="">-- No template --</option>'+t.map(x=>'<option value="'+x.name+'">'+x.name+'</option>').join('');['st','m2it'].forEach(id=>{const el=$(id);if(el)el.innerHTML=opts;});}catch(e){toast(e.message,'te');}}
-function newTpl(){$('etit').textContent='New Template';$('ename').value='';$('econt').value='<!DOCTYPE html>\n<html>\n<head><meta charset="utf-8"></head>\n<body>\n<p>Hello {{name}},</p>\n\n</body>\n</html>';$('emod').classList.add('show');}
-async function editTpl(n){try{const d=await api('/api/templates/'+encodeURIComponent(n));$('etit').textContent='Edit: '+n;$('ename').value=n;$('econt').value=d.content;$('emod').classList.add('show');}catch(e){toast(e.message,'te');}}
-async function saveTpl(){const n=$('ename').value;const c=$('econt').value;if(!n||!c)return toast('Name+content required','te');try{await api('/api/templates',{method:'POST',body:{name:n,content:c}});clsE();ldTpls();toast('Saved');}catch(e){toast(e.message,'te');}}
-async function delTpl(n){if(!confirm('Delete '+n+'?'))return;await api('/api/templates/'+encodeURIComponent(n),{method:'DELETE'});ldTpls();toast('Deleted');}
-function prevTpl(n){$('pmod').classList.add('show');$('pfrm').src='/api/templates/'+encodeURIComponent(n)+'/preview';}
-function prevST(){const n=$('st').value;if(!n)return toast('Select template','te');prevTpl(n);}
-function prevM2I(){const n=$('m2it').value;if(!n)return toast('Select template','te');prevTpl(n);}
-function clsE(){$('emod').classList.remove('show');}function clsP(){$('pmod').classList.remove('show');}
-function uploadTplBtn(){$('tpl-upload').click();}
-async function uploadTpl(inp){const f=inp.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);try{await api('/api/templates/upload',{method:'POST',body:fd});ldTpls();toast('Uploaded: '+f.name);}catch(e){toast(e.message,'te');}}
-
-// ═══ VERIFY ═══
-function ldVF(i){const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{$('ve').value=e.target.result;updVC();};r.readAsText(f);}
-function useExtV(){api('/api/leads').then(d=>{$('ve').value=(d.extracted||[]).join('\n');updVC();});}
-function updVC(){$('vcnt').textContent=$('ve').value.split('\n').filter(e=>e.trim().includes('@')).length+' emails';}
-$('ve')?.addEventListener('input',updVC);
-async function chkMV(){try{const d=await api('/api/verify/check-api',{method:'POST',body:{apiKey:$('mvk').value}});toast(d.success?'API Valid ('+d.credits+' credits)':'API Invalid','te');}catch(e){toast(e.message,'te');}}
-async function startVerify(){try{const em=$('ve').value.split('\n').map(e=>e.trim()).filter(e=>e.includes('@'));if(!em.length)return toast('No emails','te');toast('Verifying '+em.length+'...','tw');const d=await api('/api/verify',{method:'POST',body:{emails:em,apiKey:$('mvk').value}});$('vv').textContent=d.stats.valid;$('vc').textContent=d.stats.catchAll;$('vi').textContent=d.stats.invalid;$('vd').textContent=d.stats.disposable;toast('Verified '+em.length+' emails');}catch(e){toast(e.message,'te');}}
-
-// ═══ MX SORTER (FULL PIPELINE — Dynamic Provider Types, matches Electron 2.2) ═══
-let mxData = { results: {}, domains: {}, filtered: {}, providers: [] };
-
-// Provider color palette (matches Electron's per-provider accent colors)
-const PROV_COLORS = {
-  O365:'#0078d4', Google:'#ea4335', Yahoo:'#6001d2', Mimecast:'#1d9fc0', Proofpoint:'#f5811f',
-  Barracuda:'#00a2e8', Cisco:'#049fd9', GoDaddy:'#00a4a6', Rackspace:'#c40022', AWS:'#ff9900',
-  Zoho:'#159f46', Fastmail:'#304ffe', iCloud:'#a2aaad', Proton:'#6d4aff', Sophos:'#003366',
-  Forcepoint:'#00b4d8', TrendMicro:'#d81920', MessageLabs:'#002855', Symantec:'#fdb813',
-  FireEye:'#c8102e', Cloudflare:'#f38020', IONOS:'#003d8f', OVH:'#000e9c', Namecheap:'#de5833',
-  Intermedia:'#2e3192', SpamExperts:'#333', HostGator:'#f7941e', Bluehost:'#2e55a0',
-  SiteGround:'#87c540', DreamHost:'#1e69db', Migadu:'#40bf80', MailRu:'#005ff9', Yandex:'#fc3f1d',
-  NetEase:'#d43c33', QQ:'#12b7f5', GMX:'#004c99', Tutanota:'#840010', MailChannels:'#1f2937',
-  SpamHero:'#4b0082', AppRiver:'#007dc5', SendGrid:'#1a82e2', Postmark:'#ffcd00', Mailgun:'#f06b66',
-  Other:'#555'
-};
-const PROV_ICONS = {
-  O365:'fab fa-microsoft', Google:'fab fa-google', Yahoo:'fab fa-yahoo', Mimecast:'fas fa-shield-alt',
-  Proofpoint:'fas fa-shield-alt', Barracuda:'fas fa-shield-alt', Cisco:'fas fa-shield-alt',
-  GoDaddy:'fas fa-server', Rackspace:'fas fa-server', AWS:'fab fa-aws', Zoho:'fas fa-envelope',
-  Fastmail:'fas fa-bolt', iCloud:'fab fa-apple', Proton:'fas fa-lock', Sophos:'fas fa-shield-alt',
-  Forcepoint:'fas fa-shield-alt', TrendMicro:'fas fa-shield-alt', MessageLabs:'fas fa-shield-alt',
-  Symantec:'fas fa-shield-alt', FireEye:'fas fa-fire', Cloudflare:'fas fa-cloud',
-  IONOS:'fas fa-server', OVH:'fas fa-server', Namecheap:'fas fa-server', Intermedia:'fas fa-server',
-  MailRu:'fas fa-envelope', Yandex:'fas fa-envelope', NetEase:'fas fa-envelope', QQ:'fas fa-envelope',
-  GMX:'fas fa-envelope', Tutanota:'fas fa-lock', Other:'fas fa-question-circle'
-};
-
-function getProvColor(p){return PROV_COLORS[p]||'#555';}
-function getProvIcon(p){return PROV_ICONS[p]||'fas fa-server';}
-
-function ldMF(i){const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{$('me').value=e.target.result;updMC();};r.readAsText(f);}
-function useExtMX(){api('/api/leads').then(d=>{$('me').value=(d.extracted||[]).join('\n');updMC();toast(d.extracted.length+' emails loaded')});}
-function updMC(){$('mcnt').textContent=$('me').value.split('\n').filter(e=>e.trim().includes('@')).length+' emails';}
-$('me')?.addEventListener('input',updMC);
-
-// Count unique domains per provider from the filtered data
-function mxDomainCounts(){
-  const counts={};
-  for(const p of mxData.providers){
-    const doms=new Set();
-    for(const e of (mxData.filtered[p]||[])){const d=e.split('@')[1];if(d)doms.add(d);}
-    counts[p]=doms.size;
-  }
-  return counts;
-}
-
-// Build dynamic provider cards (matches Electron's per-provider cards)
-function mxBuildProviderCards(){
-  const row=$('mx-stats-row');
-  const domCounts=mxDomainCounts();
-  // Sort providers: largest email count first, Other always last
-  const sorted=[...mxData.providers].sort((a,b)=>{
-    if(a==='Other')return 1;if(b==='Other')return -1;
-    return(mxData.filtered[b]||[]).length-(mxData.filtered[a]||[]).length;
-  });
-  let html='';
-  for(const p of sorted){
-    const cnt=(mxData.filtered[p]||[]).length;
-    const dc=domCounts[p]||0;
-    const col=getProvColor(p);
-    const icon=getProvIcon(p);
-    const checked=p!=='Other'?'checked':'';
-    html+=`<div id="mx-prov-${p}" style="flex:1;min-width:140px;max-width:220px;padding:.6rem .7rem;background:var(--card);border:2px solid ${checked?col:'transparent'};border-radius:var(--r2);cursor:pointer;transition:all .2s;opacity:${checked?'1':'.45'}" onclick="mxToggleProv('${p}')">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.3rem">
-        <div style="display:flex;align-items:center;gap:.3rem"><i class="${icon}" style="color:${col};font-size:.8rem"></i><span style="font-size:.72rem;font-weight:700;color:${col}">${p}</span></div>
-        <input type="checkbox" id="mx-chk-${p}" ${checked} onclick="event.stopPropagation();mxUpdateSelected();" style="accent-color:${col}">
-      </div>
-      <div style="font-size:1.2rem;font-weight:800;color:var(--text)" id="mx-cnt-${p}">${cnt.toLocaleString()}</div>
-      <div style="display:flex;gap:.6rem;font-size:.62rem;color:var(--dim);margin-top:.15rem">
-        <span><i class="fas fa-globe" style="margin-right:.2rem"></i><span id="mx-dc-${p}">${dc}</span> domains</span>
-        <span><i class="fas fa-envelope" style="margin-right:.2rem"></i>${cnt.toLocaleString()} emails</span>
-      </div>
-      <div style="height:2px;margin-top:.4rem;border-radius:1px;background:${col};opacity:.6"></div>
-    </div>`;
-  }
-  row.innerHTML=html;
-}
-
-// Toggle individual provider selection
-function mxToggleProv(p){
-  const chk=$('mx-chk-'+p);
-  if(chk){chk.checked=!chk.checked;}
-  mxUpdateSelected();
-}
-
-// Toggle all providers
-function mxToggleAll(checked){
-  for(const p of mxData.providers){const chk=$('mx-chk-'+p);if(chk)chk.checked=checked;}
-  mxUpdateSelected();
-}
-
-async function sortMX(){
-  const em=$('me').value.split('\n').map(e=>e.trim()).filter(e=>e.includes('@'));
-  if(!em.length)return toast('No emails','te');
-  const btn=$('mx-sort-btn');const prog=$('mx-progress');const ptxt=$('mx-progress-text');const pbar=$('mx-progress-bar');
-  btn.disabled=true;btn.innerHTML='<div class="sp" style="width:12px;height:12px;border-width:2px;border-color:var(--cyan);border-top-color:transparent"></div> Sorting...';
-  prog.style.display='block';ptxt.textContent='Starting MX resolution...';pbar.style.width='0%';
-  const controller=new AbortController();
-  let stallTimer;
-  const resetStall=()=>{clearTimeout(stallTimer);stallTimer=setTimeout(()=>{controller.abort();ptxt.textContent='Timed out waiting for response';toast('MX sort timed out - try fewer emails','te');},45000);};
-  resetStall();
-  try{
-    const resp=await fetch('/api/mx-sort/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails:em}),signal:controller.signal});
-    const reader=resp.body.getReader();const decoder=new TextDecoder();let buf='';
-    while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      resetStall();
-      buf+=decoder.decode(value,{stream:true});
-      const lines=buf.split('\n');buf=lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data: '))continue;
-        try{
-          const d=JSON.parse(line.slice(6));
-          if(d.phase){ptxt.textContent=d.phase;pbar.style.width=(d.progress||0)+'%';}
-          if(d.providerCounts){
-            // Live update during streaming
-            ptxt.textContent=d.phase||ptxt.textContent;
-          }
-          if(d.done){
-            mxData.results=d.results;mxData.domains=d.domains;
-            // Build providers list dynamically from results
-            mxData.providers=Object.keys(d.results).filter(k=>(d.results[k]||[]).length>0);
-            // Deep copy for filtering
-            mxData.filtered={};
-            for(const p of mxData.providers){mxData.filtered[p]=[...(d.results[p]||[])];}
-            // Update summary stats
-            $('mx-summary-row').style.display='';
-            $('mx-sum-domains').textContent=d.totalDomains?.toLocaleString()||Object.keys(d.domains||{}).length;
-            $('mx-sum-types').textContent=d.serverTypes||mxData.providers.length;
-            $('mx-sum-emails').textContent=d.totalEmails?.toLocaleString()||em.length;
-            // Build dynamic provider cards
-            mxBuildProviderCards();
-            // Show pipeline steps
-            $('mx-select-bar').style.display='flex';
-            $('mx-filter-card').style.display='block';$('mx-actions-card').style.display='block';$('mx-results-card').style.display='block';
-            mxUpdateSelected();mxBuildDomainTable();
-            toast('Sorted '+em.length+' emails across '+(d.totalDomains||Object.keys(d.domains).length)+' domains, '+mxData.providers.length+' server types');
-            setTimeout(()=>{prog.style.display='none';},2000);
-          }
-          if(d.error){ptxt.textContent='Error: '+d.error;toast(d.error,'te');}
-        }catch{}
-      }
+    // ─── Navigation ───
+    function switchPanel(name) {
+      currentPanel = name;
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      const panel = document.getElementById('panel-' + name);
+      if (panel) panel.classList.add('active');
+      const nav = document.querySelector(`.nav-item[data-panel="${name}"]`);
+      if (nav) nav.classList.add('active');
+      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', settings:'Settings' };
+      document.getElementById('topbarTitle').textContent = titles[name] || name;
+      if (name === 'emails') loadEmails();
+      if (name === 'approval') loadApprovalQueue();
+      if (name === 'accounts') loadAccounts();
+      if (name === 'activity') loadActivity();
+      if (name === 'settings') loadSettings();
     }
-  }catch(e){
-    if(e.name!=='AbortError'){toast(e.message,'te');ptxt.textContent='Error: '+e.message;}
-  }
-  clearTimeout(stallTimer);
-  btn.disabled=false;btn.innerHTML='<i class="fas fa-sort"></i> Sort';
-}
 
-function mxGetSelected(){
-  let emails=[];
-  for(const p of mxData.providers){
-    const chk=$('mx-chk-'+p);
-    if(chk&&chk.checked&&mxData.filtered[p]){emails=emails.concat(mxData.filtered[p]);}
-  }
-  return[...new Set(emails)];
-}
+    // ─── Stats ───
+    async function loadStats() {
+      try {
+        const r = await fetch(API('/stats')).then(r => r.json());
+        document.getElementById('statsRow').innerHTML = `
+          <div class="stat-card"><div class="label">Active Accounts</div><div class="value">${r.active_accounts||0}</div></div>
+          <div class="stat-card"><div class="label">Emails (24h)</div><div class="value">${r.last_24h||0}</div><div class="sub">${r.total_emails||0} total</div></div>
+          <div class="stat-card"><div class="label">Real Replies</div><div class="value" style="color:var(--green)">${r.real_replies||0}</div><div class="sub">${r.auto_replies_detected||0} auto detected</div></div>
+          <div class="stat-card"><div class="label">Sent</div><div class="value" style="color:var(--blue)">${r.sent_replies||0}</div></div>
+          <div class="stat-card"><div class="label">Pending Approval</div><div class="value" style="color:var(--yellow)">${r.pending_approval||0}</div></div>
+          <div class="stat-card"><div class="label">Scheduled</div><div class="value" style="color:var(--accent)">${r.scheduled||0}</div></div>
+          <div class="stat-card"><div class="label">Failed</div><div class="value" style="color:var(--red)">${r.failed||0}</div></div>
+          <div class="stat-card"><div class="label">Engine</div><div class="value" style="font-size:14px;color:${r.engine_running?'var(--green)':'var(--red)'}">${r.engine_running?'RUNNING':'STOPPED'}</div></div>
+        `;
+        // Update approval badge
+        const badge = document.getElementById('navApprovalCount');
+        if ((r.pending_approval||0) > 0) { badge.style.display='inline'; badge.textContent=r.pending_approval; }
+        else { badge.style.display='none'; }
+      } catch(e) { console.error('Stats error:', e); }
+    }
 
-function mxUpdateSelected(){
-  const sel=mxGetSelected();
-  $('mx-selected-count').textContent=sel.length+' selected';
-  $('mx-final-count').textContent=sel.length;
-  $('mx-sum-selected').textContent=sel.length;
-  $('mx-select-info').textContent=sel.length+' emails selected';
-  // Update breakdown display
-  let bk='';
-  for(const p of mxData.providers){
-    const chk=$('mx-chk-'+p);
-    const cnt=(mxData.filtered[p]||[]).length;
-    const col=getProvColor(p);
-    if(chk&&chk.checked&&cnt>0)bk+=`<span style="color:${col};margin-right:.6rem"><i class="fas fa-circle" style="font-size:6px;vertical-align:middle;margin-right:.2rem"></i>${p}: ${cnt.toLocaleString()}</span>`;
-    // Update card visual state
-    const card=$('mx-prov-'+p);
-    if(card){card.style.borderColor=chk&&chk.checked?col:'transparent';card.style.opacity=chk&&chk.checked?'1':'.45';}
-  }
-  $('mx-final-breakdown').innerHTML=bk||'<span style="color:var(--dim)">None selected</span>';
-  if($('mx-camp-count'))$('mx-camp-count').textContent=sel.length;
-  // Update select-all checkbox state
-  const allChecked=mxData.providers.every(p=>{const chk=$('mx-chk-'+p);return chk&&chk.checked;});
-  if($('mx-select-all'))$('mx-select-all').checked=allChecked;
-}
+    // ─── Engine ───
+    async function checkEngineStatus() {
+      try {
+        const r = await fetch(API('/engine/status')).then(r => r.json());
+        const dot = document.getElementById('engineDot');
+        const label = document.getElementById('engineLabel');
+        const btn = document.getElementById('btnStartEngine');
+        if (r.running) {
+          dot.className='engine-dot on'; label.textContent='Engine running';
+          btn.innerHTML='<i class="fas fa-stop"></i> Stop Engine'; btn.className='btn btn-danger btn-sm';
+        } else {
+          dot.className='engine-dot off'; label.textContent='Engine stopped';
+          btn.innerHTML='<i class="fas fa-play"></i> Start Engine'; btn.className='btn btn-success btn-sm';
+        }
+      } catch(e) {}
+    }
 
-function mxApplyFilter(){
-  const removeDomains=$('mx-remove-domains').value.split('\n').map(d=>d.trim().toLowerCase()).filter(Boolean);
-  const removePatterns=$('mx-remove-patterns').value.split('\n').map(p=>p.trim().toLowerCase()).filter(Boolean);
-  let removed=0;
-  for(const p of mxData.providers){
-    if(!mxData.filtered[p])continue;
-    const before=mxData.filtered[p].length;
-    mxData.filtered[p]=mxData.filtered[p].filter(e=>{
-      const low=e.toLowerCase();
-      if(removeDomains.some(d=>low.endsWith('@'+d)))return false;
-      if(removePatterns.some(pat=>low.includes(pat)))return false;
-      return true;
+    async function toggleEngine() {
+      const dot = document.getElementById('engineDot');
+      const isOn = dot.classList.contains('on');
+      try {
+        await fetch(API(isOn ? '/engine/stop' : '/engine/start'), { method:'POST' });
+        toast(isOn ? 'Engine stopped' : 'Engine started', 'success');
+        checkEngineStatus();
+        loadStats();
+      } catch(e) { toast('Engine error: ' + e.message, 'error'); }
+    }
+
+    // ─── Accounts ───
+    async function loadAccounts() {
+      try {
+        const accounts = await fetch(API('/accounts')).then(r => r.json());
+        accountsCache = accounts;
+        // Update filter dropdown
+        const sel = document.getElementById('emailFilterAccount');
+        sel.innerHTML = '<option value="">All accounts</option>' + accounts.map(a => `<option value="${a.id}">${esc(a.email)}</option>`).join('');
+
+        if (!accounts.length) {
+          document.getElementById('accountsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-envelope-open"></i></div><h3>No accounts yet</h3><p>Click "Add Account" to connect your first email account</p></div>';
+          return;
+        }
+        document.getElementById('accountsList').innerHTML = accounts.map(a => `
+          <div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+            <div style="flex:1">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="font-size:15px;font-weight:600">${esc(a.email)}</span>
+                <span class="badge-pill ${a.is_active?'badge-green':'badge-red'}">${a.is_active?'Active':'Inactive'}</span>
+                <span class="badge-pill ${a.mode==='auto'?'badge-blue':a.mode==='approval'?'badge-yellow':'badge-gray'}">${a.mode}</span>
+              </div>
+              <div style="font-size:12px;color:var(--text2);margin-bottom:4px">
+                ${a.persona_name?esc(a.persona_name):'—'}${a.persona_title?' · '+esc(a.persona_title):''}
+                ${a.campaign_name?' · Campaign: '+esc(a.campaign_name):''}
+              </div>
+              <div style="font-size:11px;color:var(--text3)">
+                ${a.campaign_link?'Link: <span style="color:var(--accent)">'+esc(a.campaign_link)+'</span>':'No campaign link set'}
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px">
+                Received: ${a.emails_received} · Replied: ${a.emails_replied} · Skipped: ${a.emails_skipped}
+                ${a.last_check_at?' · Last check: '+timeAgo(a.last_check_at):''}
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="btn btn-primary btn-xs" onclick="triggerPoll(${a.id})" title="Check now"><i class="fas fa-sync"></i></button>
+              <button class="btn btn-secondary btn-xs" onclick="editAccount(${a.id})" title="Edit"><i class="fas fa-pen"></i></button>
+              <button class="btn btn-danger btn-xs" onclick="deleteAccount(${a.id})" title="Delete"><i class="fas fa-trash"></i></button>
+            </div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Accounts error:', e); }
+    }
+
+    function showAddAccountModal() {
+      editingAccountId = null;
+      document.getElementById('accEmail').value = '';
+      document.getElementById('accPassword').value = '';
+      document.getElementById('accImapHost').value = 'mail.spacemail.com';
+      document.getElementById('accImapPort').value = '993';
+      document.getElementById('accSmtpHost').value = 'mail.spacemail.com';
+      document.getElementById('accSmtpPort').value = '465';
+      document.getElementById('accCampaignLink').value = '';
+      document.getElementById('accCampaignName').value = 'Default';
+      document.getElementById('accMode').value = 'approval';
+      document.getElementById('accPersonaName').value = '';
+      document.getElementById('accPersonaTitle').value = '';
+      document.getElementById('accMinDelay').value = '180';
+      document.getElementById('accMaxDelay').value = '1800';
+      document.getElementById('testResult').innerHTML = '';
+      openModal('addAccountModal');
+    }
+
+    async function editAccount(id) {
+      try {
+        const a = await fetch(API(`/accounts/${id}`)).then(r => r.json());
+        editingAccountId = id;
+        document.getElementById('accEmail').value = a.email;
+        document.getElementById('accPassword').value = '';
+        document.getElementById('accImapHost').value = a.imap_host;
+        document.getElementById('accImapPort').value = a.imap_port;
+        document.getElementById('accSmtpHost').value = a.smtp_host;
+        document.getElementById('accSmtpPort').value = a.smtp_port;
+        document.getElementById('accCampaignLink').value = a.campaign_link;
+        document.getElementById('accCampaignName').value = a.campaign_name;
+        document.getElementById('accMode').value = a.mode;
+        document.getElementById('accPersonaName').value = a.persona_name;
+        document.getElementById('accPersonaTitle').value = a.persona_title;
+        document.getElementById('accMinDelay').value = a.min_delay_sec;
+        document.getElementById('accMaxDelay').value = a.max_delay_sec;
+        document.getElementById('testResult').innerHTML = '';
+        openModal('addAccountModal');
+      } catch(e) { toast('Error loading account', 'error'); }
+    }
+
+    async function saveAccount() {
+      const data = {
+        email: document.getElementById('accEmail').value.trim(),
+        password: document.getElementById('accPassword').value,
+        imap_host: document.getElementById('accImapHost').value.trim(),
+        imap_port: parseInt(document.getElementById('accImapPort').value),
+        smtp_host: document.getElementById('accSmtpHost').value.trim(),
+        smtp_port: parseInt(document.getElementById('accSmtpPort').value),
+        campaign_link: document.getElementById('accCampaignLink').value.trim(),
+        campaign_name: document.getElementById('accCampaignName').value.trim(),
+        mode: document.getElementById('accMode').value,
+        persona_name: document.getElementById('accPersonaName').value.trim(),
+        persona_title: document.getElementById('accPersonaTitle').value.trim(),
+        min_delay_sec: parseInt(document.getElementById('accMinDelay').value),
+        max_delay_sec: parseInt(document.getElementById('accMaxDelay').value),
+      };
+      if (!data.email) { toast('Email required', 'error'); return; }
+      if (!editingAccountId && !data.password) { toast('Password required', 'error'); return; }
+      // Don't send empty password on edit
+      if (editingAccountId && !data.password) delete data.password;
+
+      try {
+        const url = editingAccountId ? API(`/accounts/${editingAccountId}`) : API('/accounts');
+        const method = editingAccountId ? 'PUT' : 'POST';
+        const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
+        if (r.success || r.id) {
+          toast(editingAccountId ? 'Account updated' : 'Account added', 'success');
+          closeModal('addAccountModal');
+          loadAccounts();
+        } else { toast(r.error || 'Failed', 'error'); }
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function testAccountConnection() {
+      const data = {
+        email: document.getElementById('accEmail').value.trim(),
+        password: document.getElementById('accPassword').value,
+        imap_host: document.getElementById('accImapHost').value.trim(),
+        imap_port: parseInt(document.getElementById('accImapPort').value),
+        smtp_host: document.getElementById('accSmtpHost').value.trim(),
+        smtp_port: parseInt(document.getElementById('accSmtpPort').value),
+      };
+      if (!data.email || !data.password) { toast('Email and password required for test', 'error'); return; }
+      document.getElementById('testResult').innerHTML = '<span style="color:var(--text3)"><i class="fas fa-spinner fa-spin"></i> Testing connection...</span>';
+      try {
+        const r = await fetch(API('/accounts/test'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
+        let html = '';
+        html += `<div style="margin-bottom:4px"><span style="color:${r.imap.success?'var(--green)':'var(--red)'}"><i class="fas fa-${r.imap.success?'check':'times'}"></i> IMAP: ${r.imap.success?`Connected (${r.imap.messages} messages, ${r.imap.unseen} unread)`:esc(r.imap.error)}</span></div>`;
+        html += `<div><span style="color:${r.smtp.success?'var(--green)':'var(--red)'}"><i class="fas fa-${r.smtp.success?'check':'times'}"></i> SMTP: ${r.smtp.success?'Connected':''+esc(r.smtp.error)}</span></div>`;
+        document.getElementById('testResult').innerHTML = html;
+      } catch(e) { document.getElementById('testResult').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`; }
+    }
+
+    async function deleteAccount(id) {
+      if (!confirm('Delete this account and all its emails?')) return;
+      try {
+        await fetch(API(`/accounts/${id}`), { method:'DELETE' });
+        toast('Account deleted', 'success');
+        loadAccounts();
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function triggerPoll(id) {
+      toast('Checking for new emails...', 'info');
+      try {
+        const r = await fetch(API(`/engine/poll/${id}`), { method:'POST' }).then(r => r.json());
+        if (r.success) { toast('Check complete', 'success'); loadStats(); loadApprovalQueue(); }
+        else toast(r.error || 'Check failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    // ─── Approval Queue ───
+    async function loadApprovalQueue() {
+      try {
+        const queue = await fetch(API('/approval-queue')).then(r => r.json());
+        document.getElementById('approvalInfo').textContent = `${queue.length} email(s) awaiting approval`;
+        if (!queue.length) {
+          document.getElementById('approvalList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>All clear</h3><p>No emails waiting for approval</p></div>';
+          return;
+        }
+        document.getElementById('approvalList').innerHTML = queue.map(e => `
+          <div class="email-card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div class="from"><i class="fas fa-user" style="color:var(--text3);margin-right:4px"></i> ${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
+                <div class="subject"><strong>Subject:</strong> ${esc(e.subject)}</div>
+                <div class="meta">
+                  <span class="badge-pill badge-yellow">Awaiting approval</span>
+                  <span>${esc(e.account_email)}</span>
+                  <span>${timeAgo(e.created_at)}</span>
+                </div>
+              </div>
+            </div>
+            <div class="body-preview">${esc((e.body_text||'').substring(0,300))}</div>
+            <div class="reply-preview"><strong style="color:var(--green)">AI Draft Reply:</strong>\n${esc(e.reply_text||'')}</div>
+            <div class="actions">
+              <button class="btn btn-success btn-sm" onclick="approveReply(${e.id})"><i class="fas fa-check"></i> Approve & Send</button>
+              <button class="btn btn-primary btn-sm" onclick="editReply(${e.id})"><i class="fas fa-pen"></i> Edit & Send</button>
+              <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id})"><i class="fas fa-ban"></i> Skip</button>
+              <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><i class="fas fa-eye"></i> View Full</button>
+            </div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Approval error:', e); }
+    }
+
+    async function approveReply(id) {
+      try {
+        const r = await fetch(API(`/emails/${id}/approve`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({}) }).then(r => r.json());
+        if (r.success) { toast('Reply approved — will send shortly', 'success'); loadApprovalQueue(); loadStats(); }
+        else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function editReply(id) {
+      try {
+        const email = await fetch(API(`/emails/${id}`)).then(r => r.json());
+        const newText = prompt('Edit the reply text:', email.reply_text);
+        if (newText === null) return;
+        const r = await fetch(API(`/emails/${id}/send-now`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ reply_text: newText }) }).then(r => r.json());
+        if (r.success) { toast('Reply sent!', 'success'); loadApprovalQueue(); loadStats(); }
+        else toast(r.error || 'Send failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function skipReply(id) {
+      if (!confirm('Skip this email? No reply will be sent.')) return;
+      try {
+        await fetch(API(`/emails/${id}/skip`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ reason:'Manually skipped from dashboard' }) });
+        toast('Email skipped', 'info');
+        loadApprovalQueue();
+        loadStats();
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    // ─── Emails ───
+    async function loadEmails() {
+      try {
+        const accountId = document.getElementById('emailFilterAccount')?.value || '';
+        const url = accountId ? API(`/emails?account_id=${accountId}&limit=200`) : API('/emails?limit=200');
+        const emails = await fetch(url).then(r => r.json());
+        document.getElementById('emailInfo').textContent = `${emails.length} email(s)`;
+        if (!emails.length) {
+          document.getElementById('emailsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-inbox"></i></div><h3>No emails yet</h3><p>The engine will fetch emails once started</p></div>';
+          return;
+        }
+        const classBadge = (c) => {
+          const map = { real_reply:'badge-green', auto_reply:'badge-gray', newsletter:'badge-purple', spam:'badge-red', bounce:'badge-red', out_of_office:'badge-yellow', notification:'badge-blue', pending:'badge-yellow', other:'badge-gray' };
+          return `<span class="badge-pill ${map[c]||'badge-gray'}">${c}</span>`;
+        };
+        const statusBadge = (s) => {
+          const map = { sent:'badge-green', draft:'badge-yellow', scheduled:'badge-blue', skipped:'badge-gray', failed:'badge-red', pending:'badge-yellow', approved:'badge-blue' };
+          return `<span class="badge-pill ${map[s]||'badge-gray'}">${s}</span>`;
+        };
+        document.getElementById('emailsList').innerHTML = emails.map(e => `
+          <div class="email-card" style="cursor:pointer" onclick="viewEmail(${e.id})">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div style="flex:1">
+                <div class="from">${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
+                <div class="subject">${esc(e.subject)}</div>
+              </div>
+              <div style="display:flex;gap:4px;flex-shrink:0">${classBadge(e.classification)} ${statusBadge(e.reply_status)}</div>
+            </div>
+            <div class="meta">
+              <span>${timeAgo(e.received_at||e.created_at)}</span>
+              ${e.confidence?`<span>Confidence: ${(e.confidence*100).toFixed(0)}%</span>`:''}
+              ${e.classification_reason?`<span style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.classification_reason)}</span>`:''}
+            </div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Emails error:', e); }
+    }
+
+    async function viewEmail(id) {
+      try {
+        const e = await fetch(API(`/emails/${id}`)).then(r => r.json());
+        document.getElementById('viewEmailSubject').textContent = e.subject || '(No subject)';
+        document.getElementById('viewEmailBody').innerHTML = `
+          <div style="margin-bottom:14px">
+            <div style="font-size:12px;color:var(--text3);margin-bottom:2px"><strong>From:</strong> ${esc(e.from_name)} &lt;${esc(e.from_email)}&gt;</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:2px"><strong>To:</strong> ${esc(e.to_email)}</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:2px"><strong>Date:</strong> ${e.received_at?new Date(e.received_at).toLocaleString():'Unknown'}</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:8px">
+              <strong>Classification:</strong> <span class="badge-pill badge-blue">${e.classification}</span>
+              <strong style="margin-left:8px">Confidence:</strong> ${(e.confidence*100).toFixed(0)}%
+              <strong style="margin-left:8px">Reply:</strong> <span class="badge-pill badge-green">${e.reply_status}</span>
+            </div>
+            ${e.classification_reason?`<div style="font-size:11px;color:var(--text3);margin-bottom:8px"><strong>Reason:</strong> ${esc(e.classification_reason)}</div>`:''}
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:14px;font-size:13px;line-height:1.7;white-space:pre-wrap;color:var(--text)">${esc(e.body_text||'(No text body)')}</div>
+          ${e.reply_text?`<div style="border-top:1px solid rgba(16,185,129,.2);margin-top:16px;padding-top:14px">
+            <div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:8px"><i class="fas fa-reply"></i> ${e.reply_status==='sent'?'Sent Reply':'Draft Reply'}</div>
+            <div style="font-size:13px;line-height:1.7;white-space:pre-wrap;color:var(--text);background:rgba(16,185,129,.03);padding:12px;border-radius:8px;border:1px solid rgba(16,185,129,.1)">${esc(e.reply_text)}</div>
+            ${e.reply_sent_at?`<div style="font-size:11px;color:var(--text3);margin-top:6px">Sent: ${new Date(e.reply_sent_at).toLocaleString()}</div>`:''}
+            ${e.reply_error?`<div style="font-size:11px;color:var(--red);margin-top:6px">Error: ${esc(e.reply_error)}</div>`:''}
+          </div>`:''}
+        `;
+        let footer = '<button class="btn btn-secondary" onclick="closeModal(\'viewEmailModal\')">Close</button>';
+        if (e.reply_status === 'draft') {
+          footer = `<button class="btn btn-success btn-sm" onclick="approveReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-check"></i> Approve</button>
+            <button class="btn btn-primary btn-sm" onclick="editReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-pen"></i> Edit & Send</button>
+            <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-ban"></i> Skip</button>` + footer;
+        }
+        document.getElementById('viewEmailFooter').innerHTML = footer;
+        openModal('viewEmailModal');
+      } catch(e) { toast('Error loading email', 'error'); }
+    }
+
+    // ─── Activity ───
+    async function loadActivity() {
+      try {
+        const log = await fetch(API('/activity?limit=200')).then(r => r.json());
+        if (currentPanel === 'overview') {
+          document.getElementById('recentActivity').innerHTML = log.slice(0,15).map(formatActivityEntry).join('') || '<div class="empty-state"><p>No activity yet</p></div>';
+        }
+        if (currentPanel === 'activity') {
+          document.getElementById('activityList').innerHTML = log.map(formatActivityEntry).join('') || '<div class="empty-state"><p>No activity yet</p></div>';
+        }
+      } catch(e) {}
+    }
+
+    function formatActivityEntry(e) {
+      const typeIcon = { fetch:'fa-download', reply_sent:'fa-paper-plane', scheduled:'fa-clock', draft:'fa-file-alt', skipped:'fa-ban', error:'fa-exclamation-triangle', approved:'fa-check', system:'fa-cog', account_added:'fa-user-plus', account_updated:'fa-user-edit', account_deleted:'fa-user-minus', settings:'fa-cog' };
+      const typeColor = { fetch:'var(--blue)', reply_sent:'var(--green)', scheduled:'var(--accent)', draft:'var(--yellow)', skipped:'var(--text3)', error:'var(--red)', approved:'var(--green)', system:'var(--text3)' };
+      return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start">
+        <span style="color:${typeColor[e.type]||'var(--text3)'};width:18px;text-align:center;flex-shrink:0;margin-top:1px"><i class="fas ${typeIcon[e.type]||'fa-circle'}"></i></span>
+        <span style="color:var(--text3);min-width:130px;font-family:monospace;font-size:11px;flex-shrink:0">${timeAgo(e.created_at)}</span>
+        <span style="color:var(--text);flex:1">${esc(e.message)}</span>
+        <span style="color:var(--text3);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${esc(e.detail||'').substring(0,100)}</span>
+      </div>`;
+    }
+
+    // ─── Settings ───
+    async function loadSettings() {
+      try {
+        const s = await fetch(API('/settings')).then(r => r.json());
+        document.getElementById('setAdminPw').value = s.admin_password || '';
+        document.getElementById('setOpenaiKey').value = s.openai_api_key || '';
+        document.getElementById('setOpenaiUrl').value = s.openai_base_url || '';
+        document.getElementById('setOpenaiModel').value = s.openai_model || 'gpt-4o-mini';
+        document.getElementById('setPollInterval').value = s.poll_interval_sec || '120';
+      } catch(e) {}
+    }
+
+    async function saveSettings() {
+      const data = {
+        admin_password: document.getElementById('setAdminPw').value,
+        openai_api_key: document.getElementById('setOpenaiKey').value,
+        openai_base_url: document.getElementById('setOpenaiUrl').value,
+        openai_model: document.getElementById('setOpenaiModel').value,
+        poll_interval_sec: document.getElementById('setPollInterval').value,
+      };
+      try {
+        const r = await fetch(API('/settings'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
+        if (r.success) toast('Settings saved', 'success');
+        else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    // ─── Helpers ───
+    function openModal(id) { document.getElementById(id).classList.add('show'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+    function esc(t) { const d=document.createElement('div'); d.textContent=t||''; return d.innerHTML; }
+    function timeAgo(ds) {
+      if (!ds) return '';
+      const d = Date.now() - new Date(ds).getTime();
+      const m = Math.floor(d/60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m/60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h/24) + 'd ago';
+    }
+    function toast(msg, type) {
+      type = type || 'info';
+      const icons = { success:'fa-check-circle', error:'fa-times-circle', info:'fa-info-circle' };
+      const el = document.createElement('div');
+      el.className = 'toast ' + type;
+      el.innerHTML = `<i class="fas ${icons[type]||icons.info}" style="margin-top:1px"></i><span style="flex:1">${esc(msg)}</span><span style="cursor:pointer;color:var(--text3)" onclick="this.parentElement.remove()"><i class="fas fa-times"></i></span>`;
+      document.getElementById('toastContainer').appendChild(el);
+      setTimeout(() => { if(el.parentElement) el.remove(); }, 5000);
+    }
+
+    // Close modal on overlay click
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('show')) e.target.classList.remove('show');
     });
-    removed+=before-mxData.filtered[p].length;
-  }
-  mxUpdateCounts();mxUpdateSelected();mxBuildDomainTable();
-  toast('Removed '+removed+' emails by filter');
-}
 
-function mxRemoveDupes(){
-  let removed=0;
-  const seen=new Set();
-  for(const p of mxData.providers){
-    if(!mxData.filtered[p])continue;
-    const before=mxData.filtered[p].length;
-    mxData.filtered[p]=mxData.filtered[p].filter(e=>{const low=e.toLowerCase();if(seen.has(low))return false;seen.add(low);return true;});
-    removed+=before-mxData.filtered[p].length;
-  }
-  mxUpdateCounts();mxUpdateSelected();toast('Removed '+removed+' duplicates');
-}
-
-function mxRemoveInvalid(){
-  let removed=0;
-  for(const p of mxData.providers){
-    if(!mxData.filtered[p])continue;
-    const before=mxData.filtered[p].length;
-    mxData.filtered[p]=mxData.filtered[p].filter(e=>/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(e));
-    removed+=before-mxData.filtered[p].length;
-  }
-  mxUpdateCounts();mxUpdateSelected();toast('Removed '+removed+' invalid format emails');
-}
-
-function mxUpdateCounts(){
-  for(const p of mxData.providers){
-    const el=$('mx-cnt-'+p);if(el)el.textContent=(mxData.filtered[p]||[]).length.toLocaleString();
-  }
-  // Rebuild cards to update domain counts
-  mxBuildProviderCards();
-}
-
-function mxCopySelected(){const sel=mxGetSelected();navigator.clipboard.writeText(sel.join('\n'));toast('Copied '+sel.length+' emails');}
-function mxDlSelected(){const sel=mxGetSelected();const b=new Blob([sel.join('\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='mx_sorted_'+Date.now()+'.txt';a.click();toast('Downloaded '+sel.length+' emails');}
-
-async function mxSetAsExtracted(){const sel=mxGetSelected();if(!sel.length)return toast('No emails selected','te');try{await api('/api/leads/set',{method:'POST',body:{emails:sel}});updLC();toast('Set '+sel.length+' emails as extracted leads');}catch(e){toast(e.message,'te');}}
-async function mxSetAsTest(){const sel=mxGetSelected();if(!sel.length)return toast('No emails selected','te');try{await api('/api/leads/test',{method:'POST',body:{emails:sel}});updLC();toast('Set '+sel.length+' emails as test leads');}catch(e){toast(e.message,'te');}}
-function mxUseInCampaign(){const sel=mxGetSelected();if(!sel.length)return toast('No emails selected','te');sp('dashboard');setTimeout(()=>{document.querySelector('input[name="sr"][value="custom"]').checked=true;$('srx').style.display='block';$('srx').value=sel.join('\n');toast('Loaded '+sel.length+' emails into Quick Send');},100);}
-async function mxVerifySelected(){const sel=mxGetSelected();if(!sel.length)return toast('No emails selected','te');sp('verify');setTimeout(()=>{$('ve').value=sel.join('\n');updVC();toast('Loaded '+sel.length+' emails for verification');},100);}
-
-function mxBuildDomainTable(){
-  const domains={};
-  for(const p of mxData.providers){
-    for(const e of (mxData.filtered[p]||[])){
-      const d=e.split('@')[1];if(!d)continue;
-      if(!domains[d])domains[d]={emails:[],provider:p,mx:(mxData.domains[d]||{}).mx||''};
-      domains[d].emails.push(e);
-    }
-  }
-  const sorted=Object.entries(domains).sort((a,b)=>b[1].emails.length-a[1].emails.length);
-  let html='<table class="table"><thead><tr><th>Domain</th><th>Provider</th><th>MX</th><th>Count</th><th>Action</th></tr></thead><tbody>';
-  for(const[dom,info]of sorted){
-    const col=getProvColor(info.provider);
-    html+=`<tr><td style="font-weight:600;font-size:.72rem">${dom}</td><td><span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:.64rem;font-weight:600;background:${col}22;color:${col};border:1px solid ${col}44">${info.provider}</span></td><td style="font-size:.66rem;color:var(--dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${info.mx||'-'}</td><td>${info.emails.length}</td><td><button class="btn bk bsm" onclick="mxRemoveDomain('${dom}')"><i class="fas fa-times"></i></button> <button class="btn bk bsm" onclick="mxShowDomainEmails('${dom}')"><i class="fas fa-eye"></i></button></td></tr>`;
-  }
-  html+='</tbody></table>';
-  $('mx-domain-table').innerHTML=html;
-}
-
-function mxRemoveDomain(dom){
-  for(const p of mxData.providers){if(mxData.filtered[p])mxData.filtered[p]=mxData.filtered[p].filter(e=>!e.endsWith('@'+dom));}
-  mxUpdateCounts();mxUpdateSelected();mxBuildDomainTable();toast('Removed all @'+dom+' emails');
-}
-
-function mxShowDomainEmails(dom){
-  let emails=[];
-  for(const p of mxData.providers){for(const e of (mxData.filtered[p]||[])){if(e.split('@')[1]===dom)emails.push(e);}}
-  const w=window.open('','_blank','width=500,height=400');
-  w.document.write('<html><head><title>@'+dom+' ('+emails.length+')</title><style>body{background:#0a0a0f;color:#e2e2ec;font-family:monospace;font-size:13px;padding:1rem}h3{color:#6366f1;margin-bottom:.5rem}.e{padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)}</style></head><body><h3>@'+dom+' ('+emails.length+' emails)</h3>'+emails.map(e=>'<div class="e">'+e+'</div>').join('')+'</body></html>');
-}
-
-function mxFilterDomainTable(){
-  const q=$('mx-domain-search').value.toLowerCase();
-  const rows=$('mx-domain-table').querySelectorAll('tbody tr');
-  rows.forEach(r=>{const dom=r.cells[0]?.textContent?.toLowerCase()||'';r.style.display=dom.includes(q)?'':'none';});
-}
-function mxExpandAll(){$('mx-domain-table').style.maxHeight=$('mx-domain-table').style.maxHeight==='none'?'400px':'none';}
-
-function mxLaunchCampaign(){
-  const sel=mxGetSelected();if(!sel.length)return toast('No emails selected','te');
-  const panel=$('mx-campaign-panel');
-  panel.style.display=panel.style.display==='none'?'block':'none';
-  $('mx-camp-count').textContent=sel.length;
-  api('/api/templates').then(t=>{$('mx-camp-tpl').innerHTML='<option value="">-- No template --</option>'+t.map(x=>'<option value="'+x.name+'">'+x.name+'</option>').join('');}).catch(()=>{});
-}
-
-async function mxSendCampaign(){
-  const sel=mxGetSelected();if(!sel.length)return toast('No emails selected','te');
-  const subj=$('mx-camp-subj').value;if(!subj)return toast('Subject required','te');
-  const provs=mxData.providers.filter(p=>$('mx-chk-'+p)?.checked);
-  try{
-    toast('Launching campaign...','tw');
-    const d=await api('/api/mx-sort/to-campaign',{method:'POST',body:{
-      providers:provs,subject:subj,templateName:$('mx-camp-tpl').value||undefined,
-      mode:$('mx-camp-mode').value,batchSize:parseInt($('mx-camp-batch').value),delay:parseInt($('mx-camp-delay').value),
-      senderName:$('mx-camp-sname').value,replyTo:$('mx-camp-reply').value,sendProvider:$('mx-camp-prov').value
-    }});
-    const st=$('mx-camp-status');st.style.display='block';
-    st.textContent='Campaign started: '+d.campaignId+'\nTotal: '+d.total+' emails\n\nPolling...';
-    toast('Campaign launched with '+d.total+' emails!');
-    pollCampaign(d.campaignId,'mx-camp-status');
-  }catch(e){toast(e.message,'te');}
-}
-
-// ═══ IMAGE EMAIL ═══
-async function sendImg(){try{const f=$('imgf').files[0];if(!f)return toast('Select image','te');const rec=await getRec('ir');if(!rec.length)return toast('No recipients','te');const fd=new FormData();fd.append('image',f);fd.append('recipients',JSON.stringify(rec));fd.append('subject',$('imgs').value);fd.append('hyperlink',$('imgl').value);fd.append('mode',$('imgm').value);fd.append('batchSize',$('imgb').value);fd.append('delay',$('imgd').value);fd.append('appendFooter',$('imgft').checked);fd.append('senderName',$('img-sname').value);toast('Sending...','tw');const d=await api('/api/send/image',{method:'POST',body:fd});$('imgres').style.display='block';$('imgres').textContent='Sent: '+d.sent+'/'+d.total+' | Failed: '+d.failed;toast('Done: '+d.sent+'/'+d.total);}catch(e){toast(e.message,'te');}}
-
-// ═══ MSG TO IMAGE ═══
-async function sendM2I(){try{const tn=$('m2it').value;if(!tn)return toast('Select template','te');const rec=await getRec('m2r');if(!rec.length)return toast('No recipients','te');toast('Converting & sending...','tw');const d=await api('/api/send/msg-to-image',{method:'POST',body:{recipients:rec,templateName:tn,subject:$('m2is').value,hyperlink:$('m2il').value,batchSize:parseInt($('m2ib').value),delay:parseInt($('m2id').value),appendFooter:$('m2ift').checked,senderName:$('m2i-sname').value}});$('m2ires').style.display='block';$('m2ires').textContent='Sent: '+d.sent+'/'+d.total;toast('Done');}catch(e){toast(e.message,'te');}}
-
-// ═══ ATTACHMENT ═══
-function showAttF(){$('attfl').innerHTML=[...$('attf').files].map(f=>'<div style="display:flex;align-items:center;gap:.3rem;margin:.2rem 0"><i class="fas fa-paperclip" style="color:var(--purple)"></i> '+f.name+' <span style="color:var(--dim)">('+Math.round(f.size/1024)+'KB)</span></div>').join('');}
-async function sendAtt(){try{const files=$('attf').files;if(!files.length)return toast('Add files','te');const rec=await getRec('ar');if(!rec.length)return toast('No recipients','te');const fd=new FormData();for(const f of files)fd.append('files',f);fd.append('recipients',JSON.stringify(rec));fd.append('subject',$('atts').value);fd.append('body',$('attbdy').value);fd.append('mode',$('attm').value);fd.append('batchSize',$('attbs').value);fd.append('delay',$('attdl').value);fd.append('appendFooter',$('attft').checked);fd.append('senderName',$('att-sname').value);toast('Sending...','tw');const d=await api('/api/send/attachment',{method:'POST',body:fd});$('attres').style.display='block';$('attres').textContent='Sent: '+d.sent+'/'+d.total;toast('Done');}catch(e){toast(e.message,'te');}}
-
-// ═══ ANALYTICS ═══
-let dailyChart,providerChart;
-async function loadAnalytics(){try{const d=await api('/api/analytics/summary');$('a-sent').textContent=d.total.sent;$('a-failed').textContent=d.total.failed;$('a-today-sent').textContent=d.today.sent;$('a-7d-sent').textContent=d.last7Days.sent;
-// Daily chart
-const dates=[];const sentData=[];const failData=[];for(let i=13;i>=0;i--){const dt=new Date(Date.now()-i*864e5).toISOString().slice(0,10);dates.push(dt.slice(5));const dd=d.byDate[dt]||{sent:0,failed:0};sentData.push(dd.sent);failData.push(dd.failed);}
-if(dailyChart)dailyChart.destroy();dailyChart=new Chart($('chart-daily'),{type:'bar',data:{labels:dates,datasets:[{label:'Sent',data:sentData,backgroundColor:'rgba(99,102,241,0.6)',borderRadius:4},{label:'Failed',data:failData,backgroundColor:'rgba(239,68,68,0.6)',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#6b6b80',font:{size:10}}}},scales:{x:{ticks:{color:'#6b6b80',font:{size:9}},grid:{color:'rgba(255,255,255,0.03)'}},y:{ticks:{color:'#6b6b80',font:{size:9}},grid:{color:'rgba(255,255,255,0.03)'}}}}});
-// Provider chart
-const provLabels=Object.keys(d.byProvider);const provSent=provLabels.map(k=>d.byProvider[k].sent);const provColors=['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6'];
-if(providerChart)providerChart.destroy();providerChart=new Chart($('chart-provider'),{type:'doughnut',data:{labels:provLabels.map(l=>l.toUpperCase()),datasets:[{data:provSent,backgroundColor:provColors.slice(0,provLabels.length),borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#6b6b80',font:{size:10}}}}}});
-// Account table
-const tbody=$('a-acct-table').querySelector('tbody');tbody.innerHTML=Object.entries(d.byAccount).map(([email,stats])=>{const rate=stats.sent+stats.failed>0?Math.round(stats.sent/(stats.sent+stats.failed)*100):0;return`<tr><td>${email}</td><td><span style="color:var(--success)">${stats.sent}</span></td><td><span style="color:var(--danger)">${stats.failed}</span></td><td><div class="progress-bar" style="width:80px;display:inline-block"><div class="fill ${rate>80?'fill-success':'fill-danger'}" style="width:${rate}%"></div></div> ${rate}%</td></tr>`}).join('')||'<tr><td colspan="4" style="text-align:center;color:var(--dim)">No data</td></tr>';}catch(e){toast(e.message,'te');}}
-async function resetAnalytics(){if(!confirm('Reset all analytics?'))return;await api('/api/analytics/reset',{method:'DELETE'});loadAnalytics();toast('Reset');}
-
-// ═══ LOGS ═══
-async function loadLogs(){try{const logs=await api('/api/logs');$('log-body').innerHTML=logs.map(l=>`<tr><td>${new Date(l.timestamp).toLocaleString()}</td><td>${l.campaignName||l.campaignId||'-'}</td><td>${l.total}</td><td><span style="color:var(--success)">${l.sent}</span></td><td><span style="color:var(--danger)">${l.failed}</span></td><td><span class="pill pill-info">${l.mode||'-'}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.subject||'-'}</td></tr>`).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--dim)">No logs</td></tr>';}catch{}}
-async function clearLogs(){if(!confirm('Clear all logs?'))return;await api('/api/logs/clear',{method:'DELETE'});loadLogs();toast('Cleared');}
-
-// ═══ SETTINGS ═══
-async function ldSets(){try{const s=await api('/api/settings');
-// Admin URL
-if(s.tokenSourceUrl){if($('set-admin-url'))$('set-admin-url').value=s.tokenSourceUrl;if($('admin-url'))$('admin-url').value=s.tokenSourceUrl;if($('acct-admin-url'))$('acct-admin-url').value=s.tokenSourceUrl;}
-// Anti-flagging
-$('set-af-enabled').checked=s.antiFlagging?.enabled??true;$('set-af-jitter').checked=s.antiFlagging?.jitterEnabled??true;$('set-af-jmin').value=s.antiFlagging?.jitterMin??0.7;$('set-af-jmax').value=s.antiFlagging?.jitterMax??1.8;$('set-af-autostop').checked=s.antiFlagging?.autoStopOnErrors??true;$('set-af-maxerr').value=s.antiFlagging?.maxConsecutiveErrors??3;$('set-af-dailylimit').value=s.antiFlagging?.dailyLimitPerAccount??500;$('set-af-headers').checked=s.antiFlagging?.headerVariation??true;$('set-af-humanize').checked=s.antiFlagging?.humanizeTimming??true;
-// Provider
-$('set-provider').value=s.sendProvider||'graph';$('set-sender-name').value=s.senderName||'';$('set-reply-to').value=s.replyTo||'';
-$('set-rot-enabled').checked=s.accountRotation?.enabled??false;$('set-rot-strategy').value=s.accountRotation?.strategy||'round-robin';$('set-rot-max').value=s.accountRotation?.maxPerAccount??500;$('set-rot-cooldown').value=s.accountRotation?.cooldownMinutes??30;
-$('set-throttle-enabled').checked=s.throttle?.enabled??true;$('set-throttle-min').value=s.throttle?.maxPerMinute??30;$('set-throttle-hour').value=s.throttle?.maxPerHour??500;$('set-throttle-day').value=s.throttle?.maxPerDay??5000;
-$('sfe').checked=s.footer?.enabled??true;$('sfh').value=s.footer?.html||'';$('sfl').value=s.footer?.emptyLines??10;$('sfhid').checked=s.footer?.hidden??false;
-$('sdm').value=s.defaultMode||'TO (individual)';$('sdbs').value=s.defaultBatchSize??190;$('sddl').value=s.defaultDelay??4;$('sbcc').value=s.bccPrimaryRecipient||'';$('ssent').checked=s.saveToSent??false;
-$('spe').checked=s.proxy?.enabled??false;$('sph').value=s.proxy?.host||'';$('spp').value=s.proxy?.port||'';$('spu').value=s.proxy?.username||'';$('spw').value=s.proxy?.password||'';
-$('sse').checked=s.spamBypass?.enabled??true;$('ssi').checked=s.spamBypass?.invisibleText??true;$('ssh').checked=s.spamBypass?.htmlComments??true;$('ssz').checked=s.spamBypass?.zeroWidthChars??true;$('ssv').checked=s.spamBypass?.varyHtmlStructure??true;$('ssc').checked=s.spamBypass?.randomizeCss??true;$('ssm').checked=s.spamBypass?.randomMetaTags??true;
-$('sec').checked=s.errorHandling?.continueOnError??true;$('ser').checked=s.errorHandling?.retryFailed??true;$('semr').value=s.errorHandling?.maxRetries??2;$('serd').value=s.errorHandling?.retryDelay??5;$('semc').value=s.errorHandling?.maxConcurrent??3;
-$('cvco').value=s.customVariables?.company||'';$('cvwb').value=s.customVariables?.website||'';$('cvph').value=s.customVariables?.phone||'';$('cvad').value=s.customVariables?.address||'';$('cv1').value=s.customVariables?.custom1||'';$('cv2').value=s.customVariables?.custom2||'';
-$('mvk').value=s.millionVerifierKey||'';}catch{}}
-async function saveSets(){try{await api('/api/settings',{method:'PUT',body:{
-tokenSourceUrl:$('set-admin-url')?.value||undefined,
-antiFlagging:{enabled:$('set-af-enabled').checked,jitterEnabled:$('set-af-jitter').checked,jitterMin:parseFloat($('set-af-jmin').value),jitterMax:parseFloat($('set-af-jmax').value),autoStopOnErrors:$('set-af-autostop').checked,maxConsecutiveErrors:parseInt($('set-af-maxerr').value),dailyLimitPerAccount:parseInt($('set-af-dailylimit').value),headerVariation:$('set-af-headers').checked,humanizeTimming:$('set-af-humanize').checked},
-sendProvider:$('set-provider').value,senderName:$('set-sender-name').value,replyTo:$('set-reply-to').value,
-accountRotation:{enabled:$('set-rot-enabled').checked,strategy:$('set-rot-strategy').value,maxPerAccount:parseInt($('set-rot-max').value),cooldownMinutes:parseInt($('set-rot-cooldown').value)},
-throttle:{enabled:$('set-throttle-enabled').checked,maxPerMinute:parseInt($('set-throttle-min').value),maxPerHour:parseInt($('set-throttle-hour').value),maxPerDay:parseInt($('set-throttle-day').value)},
-footer:{enabled:$('sfe').checked,html:$('sfh').value,emptyLines:parseInt($('sfl').value),hidden:$('sfhid').checked},
-defaultMode:$('sdm').value,defaultBatchSize:parseInt($('sdbs').value),defaultDelay:parseInt($('sddl').value),bccPrimaryRecipient:$('sbcc').value,saveToSent:$('ssent').checked,
-proxy:{enabled:$('spe').checked,host:$('sph').value,port:$('spp').value,username:$('spu').value,password:$('spw').value},
-spamBypass:{enabled:$('sse').checked,invisibleText:$('ssi').checked,htmlComments:$('ssh').checked,zeroWidthChars:$('ssz').checked,varyHtmlStructure:$('ssv').checked,randomizeCss:$('ssc').checked,randomMetaTags:$('ssm').checked},
-errorHandling:{continueOnError:$('sec').checked,retryFailed:$('ser').checked,maxRetries:parseInt($('semr').value),retryDelay:parseInt($('serd').value),maxConcurrent:parseInt($('semc').value)},
-customVariables:{company:$('cvco').value,website:$('cvwb').value,phone:$('cvph').value,address:$('cvad').value,custom1:$('cv1').value,custom2:$('cv2').value},
-millionVerifierKey:$('mvk').value}});toast('Settings saved');}catch(e){toast(e.message,'te');}}
-async function testProxy(){try{const d=await api('/api/proxy/test',{method:'POST',body:{host:$('sph').value,port:$('spp').value}});toast(d.message,d.success?'ts':'te');}catch(e){toast(e.message,'te');}}
-
-// ═══ INIT ═══
-function appInit(){chkAuth();updLC();ldTpls();loadAdminUrl();loadDashStats();checkMasterMode();setInterval(()=>{chkAuth();loadDashStats();},30000);}
-async function checkMasterMode(){try{const d=await api('/api/deploy/status');if(d.masterMode){$('sb-infra').style.display='';}else{$('sb-infra').style.display='none';}}catch{$('sb-infra').style.display='none';}}
-
-// Access gate removed — direct init
-// ═══ DEPLOY MANAGEMENT ═══
-function depLog(msg, type='info') {
-  const el = $('dep-log');
-  if (!el) return;
-  const ts = new Date().toLocaleTimeString();
-  const colors = { info: 'var(--dim)', success: 'var(--success)', error: 'var(--danger)', warn: 'var(--warning)' };
-  el.innerHTML += `<div style="color:${colors[type]||colors.info}">[${ts}] ${msg}</div>`;
-  el.scrollTop = el.scrollHeight;
-}
-
-async function loadDeployPage() {
-  try {
-    const s = await api('/api/deploy/status');
-    $('dep-version').textContent = s.version || '--';
-    $('dep-status').textContent = s.masterMode ? 'Master Active' : 'Not Master';
-    $('dep-status').style.color = s.masterMode ? 'var(--success)' : 'var(--danger)';
-    $('deploy-master-badge').style.display = s.masterMode ? '' : 'none';
-  } catch (e) { depLog('Failed to load status: ' + e.message, 'error'); }
-  deployRefreshChildren();
-  deployCheckSnapshot();
-}
-
-async function deployRefreshChildren() {
-  try {
-    const children = await api('/api/deploy/children');
-    const tbody = $('dep-children-body');
-    const empty = $('dep-children-empty');
-    if (!children || !children.length) {
-      tbody.innerHTML = '';
-      empty.style.display = 'block';
-      return;
-    }
-    empty.style.display = 'none';
-    tbody.innerHTML = children.map(ch => {
-      const statusColors = { active: 'var(--success)', registered: 'var(--warning)', error: 'var(--danger)', disabled: 'var(--muted)' };
-      const sc = statusColors[ch.status] || 'var(--dim)';
-      const deployed = ch.lastDeployed ? new Date(ch.lastDeployed).toLocaleDateString() + ' ' + new Date(ch.lastDeployed).toLocaleTimeString() : '--';
-      const url = ch.deployUrl ? `<a href="${ch.deployUrl}" target="_blank" style="color:var(--accent);font-size:.68rem">${ch.deployUrl.replace('https://','').slice(0,30)}...</a>` : '--';
-      return `<tr>
-        <td style="font-weight:600">${ch.projectName}</td>
-        <td style="font-size:.65rem;color:var(--dim)">${(ch.cloudflareAccountId||'').slice(0,8)}...</td>
-        <td><span style="color:${sc};font-weight:600;text-transform:uppercase;font-size:.65rem">${ch.status}</span></td>
-        <td>${ch.version || '--'}</td>
-        <td style="font-size:.68rem">${deployed}</td>
-        <td>${url}</td>
-        <td style="display:flex;gap:.2rem">
-          <button class="btn bp bsm" onclick="deployPushOne('${ch.id}')" title="Push update"><i class="fas fa-upload"></i></button>
-          <button class="btn bd bsm" onclick="deployRemoveChild('${ch.id}')" title="Remove"><i class="fas fa-trash"></i></button>
-        </td>
-      </tr>`;
-    }).join('');
-  } catch (e) {
-    $('dep-children-body').innerHTML = '';
-    $('dep-children-empty').style.display = 'block';
-  }
-}
-
-async function deployRegisterChild() {
-  const projectName = $('dep-proj').value.trim();
-  const cloudflareAccountId = $('dep-acctid').value.trim();
-  const apiToken = $('dep-token').value.trim();
-  const ownerEmail = $('dep-email').value.trim();
-  if (!projectName) { toast('Project name is required', 'te'); return; }
-  if (!cloudflareAccountId) { toast('Account ID is required', 'te'); return; }
-  if (!apiToken) { toast('API token is required', 'te'); return; }
-  try {
-    depLog(`Registering child: ${projectName}...`);
-    const r = await api('/api/deploy/register-child', { method: 'POST', body: { projectName, cloudflareAccountId, apiToken, ownerEmail } });
-    toast('Child registered: ' + projectName);
-    depLog(`Registered child ${projectName} (${r.id})`, 'success');
-    $('dep-proj').value = ''; $('dep-acctid').value = ''; $('dep-token').value = ''; $('dep-email').value = '';
-    deployRefreshChildren();
-  } catch (e) { toast('Register failed: ' + e.message, 'te'); depLog('Register failed: ' + e.message, 'error'); }
-}
-
-async function deployRemoveChild(id) {
-  if (!confirm('Remove this child deployment?')) return;
-  try {
-    await api('/api/deploy/children/' + id, { method: 'DELETE' });
-    toast('Child removed');
-    depLog('Removed child: ' + id, 'warn');
-    deployRefreshChildren();
-  } catch (e) { toast('Remove failed: ' + e.message, 'te'); }
-}
-
-async function deploySnapshot() {
-  try {
-    depLog('Taking snapshot of current deployment files...');
-    toast('Taking snapshot...', 'tw');
-    const r = await api('/api/deploy/snapshot', { method: 'POST' });
-    depLog('Snapshot saved: ' + r.files.join(', '), 'success');
-    toast('Snapshot saved with ' + r.files.length + ' files');
-    deployCheckSnapshot();
-  } catch (e) { toast('Snapshot failed: ' + e.message, 'te'); depLog('Snapshot failed: ' + e.message, 'error'); }
-}
-
-async function deployCheckSnapshot() {
-  try {
-    const s = await api('/api/deploy/snapshot-status');
-    const info = $('dep-snapshot-info');
-    if (s.hasSnapshot) {
-      const fileList = s.files.map(f => `${f} (${formatBytes(s.sizes[f]||0)})`).join(', ');
-      info.innerHTML = `<div style="color:var(--success)"><i class="fas fa-check-circle"></i> Snapshot: ${s.files.length} files | ${s.snapshotTime ? new Date(s.snapshotTime).toLocaleString() : '--'}</div>
-        <div style="margin-top:.2rem">${fileList}</div>
-        <div style="margin-top:.2rem;color:${s.hasWorker?'var(--success)':'var(--warning)'}"><i class="fas fa-${s.hasWorker?'check':'exclamation-triangle'}"></i> _worker.js: ${s.hasWorker?'Included':'NOT included - upload it separately'}</div>`;
-    } else {
-      info.innerHTML = '<div style="color:var(--warning)"><i class="fas fa-exclamation-triangle"></i> No snapshot. Take a snapshot before pushing to children.</div>';
-    }
-  } catch {}
-}
-function formatBytes(b) { if (b < 1024) return b + ' B'; if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'; return (b / 1048576).toFixed(1) + ' MB'; }
-
-function deployUploadWorker() { $('worker-upload').click(); }
-async function deployHandleWorkerUpload(input) {
-  const file = input.files[0];
-  if (!file) return;
-  try {
-    depLog('Uploading _worker.js (' + formatBytes(file.size) + ')...');
-    toast('Uploading worker bundle...', 'tw');
-    const fd = new FormData();
-    fd.append('worker', file);
-    const r = await fetch('/api/deploy/upload-worker', { method: 'POST', body: fd });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Upload failed');
-    depLog('Worker bundle uploaded: ' + formatBytes(d.size), 'success');
-    toast('Worker bundle uploaded');
-    deployCheckSnapshot();
-  } catch (e) { toast('Upload failed: ' + e.message, 'te'); depLog('Worker upload failed: ' + e.message, 'error'); }
-  input.value = '';
-}
-
-async function deployPushOne(childId) {
-  try {
-    depLog(`Pushing update to child ${childId}...`);
-    toast('Deploying...', 'tw');
-    const r = await api('/api/deploy/push-update', { method: 'POST', body: { childId } });
-    showPushResults(r.results || []);
-    deployRefreshChildren();
-  } catch (e) { toast('Push failed: ' + e.message, 'te'); depLog('Push failed: ' + e.message, 'error'); }
-}
-
-async function deployPushAll() {
-  if (!confirm('Push current snapshot to ALL child deployments?')) return;
-  try {
-    depLog('Pushing update to all children...');
-    toast('Deploying to all children...', 'tw');
-    const r = await api('/api/deploy/push-update', { method: 'POST', body: { all: true } });
-    showPushResults(r.results || []);
-    deployRefreshChildren();
-  } catch (e) { toast('Push all failed: ' + e.message, 'te'); depLog('Push all failed: ' + e.message, 'error'); }
-}
-
-function showPushResults(results) {
-  const el = $('dep-push-status');
-  if (!results.length) { el.style.display = 'none'; return; }
-  el.style.display = 'block';
-  const ok = results.filter(r => r.success).length;
-  const fail = results.filter(r => !r.success).length;
-  el.style.background = fail ? 'var(--danger-g)' : 'var(--success-g)';
-  el.style.color = fail ? 'var(--danger)' : 'var(--success)';
-  el.innerHTML = `<div style="font-weight:700;margin-bottom:.3rem"><i class="fas fa-${fail?'exclamation-triangle':'check-circle'}"></i> Push Results: ${ok} succeeded, ${fail} failed</div>` +
-    results.map(r => {
-      const stepsHtml = (r.steps||[]).map(s => `<div style="color:var(--dim);font-size:.65rem;padding-left:.8rem">→ ${s}</div>`).join('');
-      if (r.success) {
-        depLog(`Deployed ${r.projectName} → ${r.deployUrl}`, 'success');
-        (r.steps||[]).forEach(s => depLog(`  ${r.projectName}: ${s}`, 'info'));
-        return `<div style="color:var(--success)"><i class="fas fa-check"></i> ${r.projectName}: <a href="${r.deployUrl}" target="_blank" style="color:var(--accent)">${r.deployUrl}</a></div>${stepsHtml}`;
-      }
-      depLog(`Failed ${r.projectName}: ${r.error}`, 'error');
-      (r.steps||[]).forEach(s => depLog(`  ${r.projectName}: ${s}`, 'warn'));
-      return `<div style="color:var(--danger)"><i class="fas fa-times"></i> ${r.projectName}: ${r.error}</div>${stepsHtml}`;
-    }).join('');
-  setTimeout(() => el.style.display = 'none', 30000);
-}
-
-// Access gate removed — init app directly
-appInit();
-</script>
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
 </body>
 </html>
