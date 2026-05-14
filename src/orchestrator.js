@@ -181,7 +181,7 @@ async function sendScheduledReplies() {
 
 // ─── Process pending backlog emails (classify + draft) ───
 // Runs each poll cycle, processes up to BATCH_SIZE pending emails per tenant
-const PENDING_BATCH_SIZE = 10; // emails per tenant per poll cycle — prevents API overload
+const PENDING_BATCH_SIZE = 25; // emails per tenant per poll cycle — balanced speed vs API rate limits
 
 async function processPendingBacklog() {
   const activeTenants = tenantStmts.getActive.all();
