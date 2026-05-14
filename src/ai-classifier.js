@@ -586,8 +586,22 @@ export async function generateReply(email, account, tenantId = 1) {
   const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples);
   const provider = getProvider(tenantId);
 
+  // Post-generation cleanup: fix placeholders, trim whitespace
+  const cleanReply = (text) => {
+    if (!text) return text;
+    return text
+      // Remove [Your Title], [Your Title Here], [Title], etc.
+      .replace(/\n?\[Your Title(?:\s+Here)?\]/gi, '')
+      .replace(/\n?\[Title\]/gi, '')
+      .replace(/\n?\[Your Position\]/gi, '')
+      // Remove duplicate blank lines left by placeholder removal
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
   // Attempt 1: Primary model
   let reply = await callAI(tenantId, prompt, 0.7, 500);
+  reply = cleanReply(reply);
   let validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response from AI' };
 
   if (validation.valid) {
@@ -600,6 +614,7 @@ export async function generateReply(email, account, tenantId = 1) {
 
   // Attempt 2: Retry with lower temperature
   reply = await callAI(tenantId, prompt, 0.3, 500);
+  reply = cleanReply(reply);
   validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response' };
 
   if (validation.valid) {
@@ -614,6 +629,7 @@ export async function generateReply(email, account, tenantId = 1) {
       console.log(`[REPLY] T${tenantId} Trying fallback model: ${fallbackModel}`);
 
       reply = await callAI(tenantId, prompt, 0.5, 500, fallbackModel);
+      reply = cleanReply(reply);
       validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response' };
 
       if (validation.valid) {
@@ -639,7 +655,7 @@ CONTEXT:
 - You are "${personaName}"${personaTitle ? `, ${personaTitle}` : ''}
 - The recipient's first name is "${firstName}"
 - You must naturally include this link in the reply: ${campaignLink}
-- The link is for scheduling a call / viewing requirements / next steps
+- The link is where the recipient can schedule a meeting and review our project requirements
 ${trainingExamples || ''}
 
 INCOMING EMAIL:
@@ -654,8 +670,8 @@ RULES:
 3. Address them by first name ("Hi ${firstName},")
 4. Sound like a real person — not a template, not robotic
 5. Acknowledge what they said specifically (show you read their email)
-6. Naturally work in the link — frame it as requirements doc, calendar, project details, etc.
-7. Sign off with your name and title
+6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
+7. Sign off with exactly "${personaName}"${personaTitle ? ` and "${personaTitle}"` : ''} — never write "[Your Title]" or any bracket placeholder
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
 9. Do NOT use exclamation marks excessively
 10. Do NOT say "I hope this email finds you well" or similar cliches
@@ -779,54 +795,54 @@ function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUn
 
     case 'asking_what_services':
       body = pick([
-        `Thanks for getting back to me on this.\n\nWe're primarily looking for support on the estimating and pre-construction side. We handle a good mix of commercial projects — anything from ground-up to renovations — and we're looking to streamline how we manage bids and subcontractor coordination.\n\nI put together a brief overview of our current workflow and what we're looking for here: ${link}\n\n${pick(['Let me know if that gives you enough to go on.', 'Happy to jump on a quick call if easier to walk through it.', 'Take a look and let me know your thoughts.'])}`,
-        `Appreciate you following up.\n\nOn our end, we're focused on commercial construction — estimating, takeoffs, and bid management. We've been handling most of it manually and are looking at options to tighten up the process.\n\nI outlined the scope and a few specifics here: ${link}\n\n${pick(['Would be happy to discuss further if that helps.', 'Let me know if you need anything else from my side.', 'Feel free to reach out with any questions.'])}`,
-        `Thanks for asking — happy to clarify.\n\nWe do a range of commercial and industrial projects and right now we're looking at improving our estimating workflow. The volume has picked up and we need a more reliable system for tracking bids, quantities, and sub coordination.\n\nHere's a quick rundown of what we're working with: ${link}\n\n${pick(['Curious to hear how you might be able to help with that.', 'Let me know if that lines up with what you handle.', 'Looking forward to your thoughts on it.'])}`,
+        `Thanks for getting back to me on this.\n\nWe're primarily looking for support on the estimating and pre-construction side. We handle a good mix of commercial projects — anything from ground-up to renovations — and we're looking to streamline how we manage bids and subcontractor coordination.\n\nI put together our requirements and a way to schedule a quick call here: ${link}\n\n${pick(['Take a look and let me know if that gives you enough to go on.', 'Feel free to grab a time slot and we can walk through it.', 'Pick a time that works and we can discuss further.'])}`,
+        `Appreciate you following up.\n\nOn our end, we're focused on commercial construction — estimating, takeoffs, and bid management. We've been handling most of it manually and are looking at options to tighten up the process.\n\nI outlined the scope and specifics along with a way to schedule a meeting here: ${link}\n\n${pick(['Would be happy to connect and discuss further.', 'Grab a time that works for you and we can go from there.', 'Feel free to book a slot and we can talk through it.'])}`,
+        `Thanks for asking — happy to clarify.\n\nWe do a range of commercial and industrial projects and right now we're looking at improving our estimating workflow. The volume has picked up and we need a more reliable system for tracking bids, quantities, and sub coordination.\n\nHere's our requirements along with a link to schedule a call: ${link}\n\n${pick(['Curious to hear how you might be able to help — pick a time and let\'s connect.', 'Let me know if that lines up with what you handle and grab a time to chat.', 'Looking forward to your thoughts — feel free to book a meeting from there.'])}`,
       ]);
       break;
 
     case 'wants_to_schedule_call':
       body = pick([
-        `Thanks for following up — I'd be happy to connect.\n\nI'm generally open ${pick(['later this week', 'most afternoons this week', 'Thursday or Friday'])}. ${pick(['Mornings tend to work best for me but I can be flexible.', 'Anytime after 10 AM works well on my end.', 'I can make most time slots work.'])}\n\nIn the meantime, here's a quick overview of what we're working on so we can hit the ground running: ${link}\n\nLet me know what works on your end.`,
-        `Absolutely — a call sounds great.\n\nI'm available ${pick(['most of this week', 'tomorrow afternoon or Thursday', 'pretty much any day this week'])}. ${pick(['A 15-20 minute window should be plenty.', 'Even a quick 15 minutes would work.', 'Happy to keep it brief or go deeper depending on what makes sense.'])}\n\nI put together some notes on our project scope here if you want to take a look beforehand: ${link}\n\n${pick(['Just send over a time that works.', 'Looking forward to it.', 'Shoot me a couple times and we will make it work.'])}`,
-        `That works for me — let's get something on the calendar.\n\nI should be free ${pick(['later this week', 'Wednesday or Thursday', 'most afternoons'])}. Feel free to grab a slot or just let me know what works: ${link}\n\n${pick(['Talk soon.', 'Looking forward to connecting.', 'Appreciate the quick response.'])}`,
+        `Thanks for following up — I'd be happy to connect.\n\nI'm generally open ${pick(['later this week', 'most afternoons this week', 'Thursday or Friday'])}. ${pick(['Mornings tend to work best for me but I can be flexible.', 'Anytime after 10 AM works well on my end.', 'I can make most time slots work.'])}\n\nYou can review our requirements and schedule a meeting directly here: ${link}\n\nLet me know if you have any questions before we connect.`,
+        `Absolutely — a call sounds great.\n\nI'm available ${pick(['most of this week', 'tomorrow afternoon or Thursday', 'pretty much any day this week'])}. ${pick(['A 15-20 minute window should be plenty.', 'Even a quick 15 minutes would work.', 'Happy to keep it brief or go deeper depending on what makes sense.'])}\n\nI put together our project requirements here — you can also schedule the call directly from the same page: ${link}\n\n${pick(['Just grab a slot that works.', 'Looking forward to it.', 'Pick a time and we will make it work.'])}`,
+        `That works for me — let's get something on the calendar.\n\nI should be free ${pick(['later this week', 'Wednesday or Thursday', 'most afternoons'])}. You can review our requirements and grab a time slot here: ${link}\n\n${pick(['Talk soon.', 'Looking forward to connecting.', 'Appreciate the quick response.'])}`,
       ]);
       break;
 
     case 'asking_project_details':
       body = pick([
-        `Good question — let me give you some context.\n\nWe're a construction supply company handling commercial projects, and we're looking to improve how we manage the estimating and bidding side of things. Right now a lot of it is manual and we're exploring tools and partners that can help us scale that up.\n\nI put together a quick summary here: ${link}\n\n${pick(['Happy to walk through the details on a call if that would help.', 'Let me know if you want to dig into any of that further.', 'Take a look and let me know what questions you have.'])}`,
-        `Sure thing — happy to share more.\n\nWe specialize in commercial construction supply and our main focus right now is tightening up the pre-construction and estimating process. We've been growing and the current setup doesn't scale well.\n\nHere's an overview of what we have in mind: ${link}\n\n${pick(['Would love to hear your take on it.', 'Curious if this falls in your wheelhouse.', 'Let me know if there is a good time to discuss.'])}`,
-        `Of course — I should have included more detail in my initial note.\n\nWe're on the commercial construction side — estimating, takeoffs, bid management. We're looking at solutions that can help us handle higher volume without adding headcount.\n\nI documented the key requirements here: ${link}\n\n${pick(['Let me know how this aligns with what you offer.', 'Happy to discuss further whenever works for you.', 'Would be great to get your input on approach.'])}`,
+        `Good question — let me give you some context.\n\nWe're a construction supply company handling commercial projects, and we're looking to improve how we manage the estimating and bidding side of things. Right now a lot of it is manual and we're exploring tools and partners that can help us scale that up.\n\nI put together our requirements and a link to schedule a call here: ${link}\n\n${pick(['Happy to walk through the details once we get a meeting on the books.', 'Grab a time and we can dig into the specifics.', 'Take a look and schedule a time to connect when it works for you.'])}`,
+        `Sure thing — happy to share more.\n\nWe specialize in commercial construction supply and our main focus right now is tightening up the pre-construction and estimating process. We've been growing and the current setup doesn't scale well.\n\nHere's an overview of our requirements — you can also schedule a meeting from the same page: ${link}\n\n${pick(['Would love to hear your take on it once you\'ve reviewed.', 'Pick a time and we can talk through it.', 'Let me know if there is a good slot for you to connect.'])}`,
+        `Of course — I should have included more detail in my initial note.\n\nWe're on the commercial construction side — estimating, takeoffs, bid management. We're looking at solutions that can help us handle higher volume without adding headcount.\n\nI documented the key requirements here and you can schedule a call from there as well: ${link}\n\n${pick(['Let me know how this aligns with what you offer.', 'Happy to discuss further — just grab a time that works.', 'Would be great to get your input — book a slot and we can go over it.'])}`,
       ]);
       break;
 
     case 'requesting_info_form':
       body = pick([
-        `Thanks for sending that over.\n\nI'll get the information pulled together and sent back to you. In the meantime, here's a quick overview of our company and what we're working on that might help fill in some of the blanks: ${link}\n\n${pick(['I should have everything back to you shortly.', 'Will follow up with the details soon.', 'I will get that over to you as soon as I can.'])}`,
-        `Appreciate you outlining what you need.\n\nI'll work on getting those details together for you. To give you a head start, here's some background on our company and the project scope: ${link}\n\n${pick(['I will circle back with the rest soon.', 'Let me know if there is anything else you need in the meantime.', 'Should have it over to you within a day or two.'])}`,
+        `Thanks for sending that over.\n\nI'll get the information pulled together and sent back to you. In the meantime, here's a quick overview of our requirements and a link to schedule a meeting so we can discuss in more detail: ${link}\n\n${pick(['I should have everything back to you shortly.', 'Will follow up with the details soon — feel free to grab a time slot in the meantime.', 'I will get that over to you as soon as I can.'])}`,
+        `Appreciate you outlining what you need.\n\nI'll work on getting those details together for you. To give you a head start, here's our project requirements and a way to schedule a call: ${link}\n\n${pick(['I will circle back with the rest soon — feel free to book a time in the meantime.', 'Let me know if there is anything else you need, and grab a meeting slot when you are ready.', 'Should have it over to you within a day or two.'])}`,
       ]);
       break;
 
     case 'sent_pricing_or_info':
       body = pick([
-        `Thanks for sending that over — I'll take a look and get back to you.\n\nI've also put together a summary of our requirements and timeline here in case it helps with next steps: ${link}\n\n${pick(['Will follow up once I have had a chance to review.', 'Appreciate the quick turnaround on this.', 'I will be in touch shortly.'])}`,
-        `Got it, thanks. I'll review everything and circle back.\n\nIf it helps to have more context on our side, here's a breakdown of what we're working with: ${link}\n\n${pick(['Talk soon.', 'Appreciate the info.', 'Let me know if you need anything else from us in the meantime.'])}`,
+        `Thanks for sending that over — I'll take a look and get back to you.\n\nI've also put together a summary of our requirements and a way to schedule a follow-up meeting here: ${link}\n\n${pick(['Will follow up once I have had a chance to review — feel free to book a time in the meantime.', 'Appreciate the quick turnaround on this.', 'Grab a slot to connect and we can go through it together.'])}`,
+        `Got it, thanks. I'll review everything and circle back.\n\nIf it helps to have more context on our side, here's our requirements along with a link to schedule a call: ${link}\n\n${pick(['Pick a time that works and we can discuss.', 'Appreciate the info — let\'s schedule a meeting to go over next steps.', 'Let me know if you need anything else from us in the meantime.'])}`,
       ]);
       break;
 
     case 'phone_didnt_work':
       body = pick([
-        `Apologies about that — the best way to reach me is by email for now. I'm usually quicker to respond here.\n\nIf it helps, I put together an overview of what we're looking for so we can keep things moving: ${link}\n\n${pick(['Happy to jump on a call at a scheduled time if needed.', 'Feel free to suggest a time and I can make sure I am available.', 'Let me know what works best for you going forward.'])}`,
-        `Sorry about the phone issue — email is the most reliable way to get me right now.\n\nTo keep things on track, here's a rundown of our project and what we need: ${link}\n\n${pick(['We can set up a call whenever convenient — just send me a couple options.', 'Let me know if a call would still be helpful and I will make it work.', 'Happy to continue over email or schedule something at a specific time.'])}`,
+        `Apologies about that — the best way to reach me is by email for now. I'm usually quicker to respond here.\n\nI put together our requirements and a way to schedule a meeting at a time that works for both of us: ${link}\n\n${pick(['Feel free to grab a slot and we can connect properly.', 'Pick a time that works and we can go from there.', 'Let me know what works best for you — or just book directly from the link.'])}`,
+        `Sorry about the phone issue — email is the most reliable way to get me right now.\n\nTo keep things on track, here's our requirements along with a link to schedule a call: ${link}\n\n${pick(['Just grab a time slot that works and we can pick up from there.', 'Book a meeting whenever convenient and we can go through everything.', 'Happy to connect at a scheduled time — just pick a slot from the link.'])}`,
       ]);
       break;
 
     default:
       body = pick([
-        `Thanks for getting back to me on this — I appreciate it.\n\nWe're in the commercial construction space and are currently looking at ways to improve our estimating and bid management workflow. I've outlined the key details here: ${link}\n\n${pick(['Would love to hear your thoughts when you get a chance.', 'Let me know if there is a good time to connect.', 'Happy to discuss further.'])}`,
-        `Appreciate the response.\n\nI wanted to give you a bit more context on what we're working on. We handle commercial construction projects and we're looking to tighten up the pre-construction side of things.\n\nHere's a summary of what we have in mind: ${link}\n\n${pick(['Let me know if this is something you can help with.', 'Would be great to get your take on it.', 'Happy to jump on a call if that is easier.'])}`,
-        `Thanks for circling back.\n\nOn our end, we're focused on construction estimating and looking at streamlining how we handle bids and takeoffs. Figured it would be easier to share the details in one place: ${link}\n\n${pick(['Let me know your thoughts.', 'Looking forward to hearing from you.', 'Feel free to reach out with any questions.'])}`,
+        `Thanks for getting back to me on this — I appreciate it.\n\nWe're in the commercial construction space and are currently looking at ways to improve our estimating and bid management workflow. I've outlined our requirements and included a link to schedule a meeting here: ${link}\n\n${pick(['Would love to hear your thoughts — grab a time and let\'s connect.', 'Let me know if there is a good time to connect, or just book directly from the link.', 'Happy to discuss further — pick a slot that works for you.'])}`,
+        `Appreciate the response.\n\nI wanted to give you a bit more context on what we're working on. We handle commercial construction projects and we're looking to tighten up the pre-construction side of things.\n\nHere's our requirements along with a way to schedule a call: ${link}\n\n${pick(['Let me know if this is something you can help with — feel free to book a time.', 'Would be great to get your take on it — grab a slot and we can discuss.', 'Happy to jump on a call — just pick a time from the link.'])}`,
+        `Thanks for circling back.\n\nOn our end, we're focused on construction estimating and looking at streamlining how we handle bids and takeoffs. I put together our requirements and a link to schedule a meeting in one place: ${link}\n\n${pick(['Let me know your thoughts — feel free to book a time to connect.', 'Looking forward to hearing from you — grab a slot when you are ready.', 'Feel free to pick a time and we can go over everything.'])}`,
       ]);
       break;
   }
