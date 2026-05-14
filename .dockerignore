@@ -1,9 +1,8 @@
 node_modules
 data
-*.db
-*.db-wal
-*.db-shm
-.env
+logs
 .git
 .gitignore
-README.md
+*.md
+ecosystem.config.cjs
+.wrangler
