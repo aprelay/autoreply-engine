@@ -339,13 +339,24 @@ Respond in EXACTLY this JSON format, nothing else:
   const content = await callAI(tenantId, prompt, 0.1, 200);
   if (!content) return null;
 
+  // Valid classification values
+  const VALID_CLASSIFICATIONS = new Set([
+    'pending', 'real_reply', 'auto_reply', 'newsletter', 'spam', 'bounce', 'out_of_office', 'notification', 'other'
+  ]);
+
   try {
     const jsonMatch = content.match(/\{[\s\S]*?\}/);
     if (jsonMatch) {
       const result = JSON.parse(jsonMatch[0]);
+      const rawClassification = (result.classification || 'other').trim().toLowerCase();
+      // Sanitize: if AI returns an unexpected value, map to 'other'
+      const classification = VALID_CLASSIFICATIONS.has(rawClassification) ? rawClassification : 'other';
+      if (!VALID_CLASSIFICATIONS.has(rawClassification)) {
+        console.warn(`[AI] Unknown classification "${rawClassification}" — mapped to 'other'`);
+      }
       return {
-        classification: result.classification || 'other',
-        confidence: Math.min(1, Math.max(0, result.confidence || 0.5)),
+        classification,
+        confidence: Math.min(1, Math.max(0, parseFloat(result.confidence) || 0.5)),
         reason: result.reason || 'AI classification',
       };
     }
@@ -375,6 +386,11 @@ export async function classifyEmail(email, tenantId = 1) {
   if (aiResult) {
     if (ruleResult && ruleResult.classification === aiResult.classification) {
       aiResult.confidence = Math.min(1, aiResult.confidence + 0.1);
+    }
+    // Safety: ensure confidence is always a valid number (prevents NOT NULL constraint)
+    if (typeof aiResult.confidence !== 'number' || isNaN(aiResult.confidence)) {
+      console.warn(`[CLASSIFY] Invalid confidence value: ${aiResult.confidence} — defaulting to 0.5`);
+      aiResult.confidence = 0.5;
     }
     globalStmts.updateEmailClassification.run({
       id: email.id,
@@ -574,21 +590,41 @@ function extractFirstName(email) {
 
 // ─── Generate Reply (tenant-aware, with quality validation + retry + fallback) ───
 export async function generateReply(email, account, tenantId = 1) {
-  const firstName = extractFirstName(email);
+  const rawFirstName = extractFirstName(email);
+  const firstName = rawFirstName || 'there'; // Fallback: "Hi there," instead of "Hi ,"
   const personaName = account.display_name || account.persona_name || account.email.split('@')[0];
   const personaTitle = account.persona_title || '';
   const campaignLink = getRandomCampaignUrl(tenantId, account.campaign_link, account.id);
   const trainingExamples = getTrainingExamples(tenantId);
 
   console.log(`[REPLY] T${tenantId} Using campaign URL: ${campaignLink}`);
+  if (!rawFirstName) console.log(`[REPLY] T${tenantId} Could not extract first name for ${email.from_email} — using "there"`);
   if (trainingExamples) console.log(`[REPLY] T${tenantId} Including ${(trainingExamples.match(/--- Example/g)||[]).length} training example(s) in prompt`);
 
   const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples);
   const provider = getProvider(tenantId);
 
-  // Post-generation cleanup: fix placeholders, trim whitespace
+  // Post-generation cleanup: fix placeholders, strip AI thinking, trim whitespace
   const cleanReply = (text) => {
     if (!text) return text;
+
+    // Strip DeepSeek/reasoning model "thinking" blocks: <think>...</think>
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    // Strip AI reasoning preamble — lines that start with "We need to", "Let me", "The context says", etc.
+    // These indicate the model is "thinking out loud" instead of writing the reply
+    const reasoningPatterns = [
+      /^(?:We need to|Let me|I need to|The (?:context|instruction|recipient|prompt) says|So (?:we|I) (?:must|need|should)|Possibly|That seems like|First,|Now,|OK,|Alright,|Okay,)[^\n]*\n?/gim,
+    ];
+    let cleaned = text;
+    for (const pattern of reasoningPatterns) {
+      cleaned = cleaned.replace(pattern, '').trim();
+    }
+    // If stripping reasoning removed everything or left <50 chars, keep original
+    if (cleaned.length >= 50) {
+      text = cleaned;
+    }
+
     return text
       // Remove [Your Title], [Your Title Here], [Title], etc.
       .replace(/\n?\[Your Title(?:\s+Here)?\]/gi, '')
@@ -599,8 +635,8 @@ export async function generateReply(email, account, tenantId = 1) {
       .trim();
   };
 
-  // Attempt 1: Primary model
-  let reply = await callAI(tenantId, prompt, 0.7, 500);
+  // Attempt 1: Primary model (800 tokens to avoid truncation)
+  let reply = await callAI(tenantId, prompt, 0.7, 800);
   reply = cleanReply(reply);
   let validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response from AI' };
 
@@ -613,7 +649,7 @@ export async function generateReply(email, account, tenantId = 1) {
   if (reply) console.warn(`[REPLY] Bad reply preview: ${reply.substring(0, 120)}...`);
 
   // Attempt 2: Retry with lower temperature
-  reply = await callAI(tenantId, prompt, 0.3, 500);
+  reply = await callAI(tenantId, prompt, 0.3, 800);
   reply = cleanReply(reply);
   validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response' };
 
@@ -628,7 +664,7 @@ export async function generateReply(email, account, tenantId = 1) {
       if (fallbackModel === provider.model) continue;
       console.log(`[REPLY] T${tenantId} Trying fallback model: ${fallbackModel}`);
 
-      reply = await callAI(tenantId, prompt, 0.5, 500, fallbackModel);
+      reply = await callAI(tenantId, prompt, 0.5, 800, fallbackModel);
       reply = cleanReply(reply);
       validation = reply ? validateReplyQuality(reply, firstName) : { valid: false, reason: 'No response' };
 
