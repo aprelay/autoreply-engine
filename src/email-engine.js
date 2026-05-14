@@ -173,19 +173,22 @@ export async function fetchNewEmails(account) {
   return newEmails;
 }
 
-// ─── SMTP: Send reply + IMAP post-send actions ───
-// After SMTP send, connects via IMAP to:
-//   1. Append the sent message to the Sent folder (so it shows in webmail)
-//   2. Flag the original inbox email as \Answered (shows replied icon)
+// ─── SMTP: Send organic threaded reply + IMAP post-send ───
+// Builds the reply exactly like a real email client:
+//   • Our reply text on top
+//   • "On [date], [name] wrote:" separator
+//   • Full original message quoted below (> prefixed in text, <blockquote> in HTML)
+//   • multipart/alternative (text + HTML) — identical to Outlook/Thunderbird/Apple Mail
+//   • Proper In-Reply-To / References threading headers
+// After SMTP, connects via IMAP to:
+//   1. Append the full threaded message to Sent folder
+//   2. Flag the original inbox email as \Answered
 export async function sendReply(account, email, replyText) {
   const transporter = nodemailer.createTransport({
     host: account.smtp_host,
     port: account.smtp_port,
     secure: true,
-    auth: {
-      user: account.email,
-      pass: account.password,
-    },
+    auth: { user: account.email, pass: account.password },
     tls: { rejectUnauthorized: false },
   });
 
@@ -195,14 +198,73 @@ export async function sendReply(account, email, replyText) {
     subject = 'Re: ' + subject;
   }
 
-  // From name = real mailbox owner (display_name), NOT persona.
-  // Mismatched name + email triggers spam in Outlook 365.
+  // From = real mailbox owner name (not persona — avoids Outlook spam flag)
   const fromName = account.display_name || account.email.split('@')[0];
+
+  // ─── Build quoted original message (like a real email client) ───
+  const origDate = email.received_at
+    ? new Date(email.received_at).toLocaleString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+      })
+    : 'earlier';
+  const origFrom = email.from_name
+    ? `${email.from_name} <${email.from_email}>`
+    : email.from_email;
+  const quoteLine = `On ${origDate}, ${origFrom} wrote:`;
+
+  // Plain-text body: our reply + blank line + quote header + > prefixed original
+  const originalText = (email.body_text || '').trim();
+  const quotedText = originalText
+    .split('\n')
+    .map(line => '> ' + line)
+    .join('\n');
+  const fullText = replyText.trim() + '\n\n' + quoteLine + '\n' + quotedText;
+
+  // HTML body: our reply + styled blockquote with original
+  const replyHtml = replyText.trim()
+    .split('\n')
+    .map(line => line === '' ? '<br>' : `<div>${escapeHtml(line)}</div>`)
+    .join('\n');
+
+  // Use original HTML if available, otherwise convert plain text
+  let originalHtml;
+  if (email.body_html && email.body_html.trim().length > 20) {
+    // Strip <html><head><body> wrappers — just keep the inner content
+    originalHtml = email.body_html
+      .replace(/<html[^>]*>/gi, '').replace(/<\/html>/gi, '')
+      .replace(/<head[\s\S]*?<\/head>/gi, '')
+      .replace(/<body[^>]*>/gi, '').replace(/<\/body>/gi, '')
+      .trim();
+  } else {
+    originalHtml = escapeHtml(originalText).replace(/\n/g, '<br>');
+  }
+
+  const fullHtml = `<div style="font-family: Calibri, Aptos, Arial, sans-serif; font-size: 11pt; color: #000;">
+${replyHtml}
+</div>
+<br>
+<div style="border-left: none; padding: 0;">
+<div style="font-size: 11pt; color: #000; font-family: Calibri, Aptos, Arial, sans-serif;">
+<hr style="display:inline-block; width:98%; border:none; border-top:1px solid #B5C4DF;">
+<div style="padding:3px 0; font-size:11pt; color:#000;">
+<b>From:</b> ${escapeHtml(origFrom)}<br>
+<b>Sent:</b> ${escapeHtml(origDate)}<br>
+<b>To:</b> ${escapeHtml(fromName)} &lt;${escapeHtml(account.email)}&gt;<br>
+<b>Subject:</b> ${escapeHtml(email.subject || '')}<br>
+</div>
+</div>
+<div style="font-family: Calibri, Aptos, Arial, sans-serif; font-size: 11pt;">
+${originalHtml}
+</div>
+</div>`;
+
   const mailOptions = {
     from: { name: fromName, address: account.email },
     to: email.from_email,
     subject: subject,
-    text: replyText,
+    text: fullText,
+    html: fullHtml,
     inReplyTo: email.message_id,
     references: email.message_id,
   };
@@ -211,11 +273,10 @@ export async function sendReply(account, email, replyText) {
     const info = await transporter.sendMail(mailOptions);
     console.log(`[SMTP] Reply sent to ${email.from_email} — MessageId: ${info.messageId}`);
 
-    // ─── IMAP post-send: Sent folder + \Answered flag (single connection) ───
+    // ─── IMAP post-send: Sent folder + \Answered flag ───
     try {
-      await imapPostSend(account, email, mailOptions, replyText);
+      await imapPostSend(account, email, info, fullText, fullHtml, subject, fromName);
     } catch (imapErr) {
-      // Non-fatal — the email WAS sent, just IMAP bookkeeping failed
       console.warn(`[IMAP] Post-send failed: ${imapErr.message}`);
     }
 
@@ -234,8 +295,13 @@ export async function sendReply(account, email, replyText) {
   }
 }
 
+// ─── Escape HTML special characters ───
+function escapeHtml(str) {
+  return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ─── IMAP post-send: append to Sent + flag original as \Answered ───
-async function imapPostSend(account, email, mailOptions, replyText) {
+async function imapPostSend(account, email, smtpInfo, fullText, fullHtml, subject, fromName) {
   const client = new ImapFlow({
     host: account.imap_host,
     port: account.imap_port,
@@ -250,15 +316,13 @@ async function imapPostSend(account, email, mailOptions, replyText) {
   try {
     await client.connect();
 
-    // ── 1. Append sent message to Sent folder ──
+    // ── 1. Append to Sent folder (full multipart message) ──
     try {
-      // Find Sent folder via \Sent special-use flag
       let sentFolder = null;
       const mailboxes = await client.list();
       for (const box of mailboxes) {
         if (box.specialUse === '\\Sent') { sentFolder = box.path; break; }
       }
-      // Fallback: try common names
       if (!sentFolder) {
         for (const name of ['Sent', 'INBOX.Sent', 'Sent Messages', 'Sent Items']) {
           try { await client.status(name, { messages: true }); sentFolder = name; break; }
@@ -267,29 +331,41 @@ async function imapPostSend(account, email, mailOptions, replyText) {
       }
 
       if (sentFolder) {
-        const fromLine = mailOptions.from.name
-          ? `"${mailOptions.from.name}" <${mailOptions.from.address}>`
-          : mailOptions.from.address;
+        const fromLine = fromName ? `"${fromName}" <${account.email}>` : account.email;
+        const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+        const messageId = smtpInfo.messageId || `<sent-${Date.now()}@${account.email.split('@')[1]}>`;
 
         let raw = '';
         raw += `From: ${fromLine}\r\n`;
-        raw += `To: ${mailOptions.to}\r\n`;
-        raw += `Subject: ${mailOptions.subject}\r\n`;
+        raw += `To: ${email.from_email}\r\n`;
+        raw += `Subject: ${subject}\r\n`;
         raw += `Date: ${new Date().toUTCString()}\r\n`;
-        raw += `Message-ID: <sent-${Date.now()}-${Math.random().toString(36).substring(2, 8)}@${mailOptions.from.address.split('@')[1]}>\r\n`;
+        raw += `Message-ID: ${messageId}\r\n`;
         raw += `MIME-Version: 1.0\r\n`;
-        raw += `Content-Type: text/plain; charset=utf-8\r\n`;
-        if (mailOptions.inReplyTo) {
-          raw += `In-Reply-To: ${mailOptions.inReplyTo}\r\n`;
-          raw += `References: ${mailOptions.inReplyTo}\r\n`;
+        if (email.message_id) {
+          raw += `In-Reply-To: ${email.message_id}\r\n`;
+          raw += `References: ${email.message_id}\r\n`;
         }
+        raw += `Content-Type: multipart/alternative; boundary="${boundary}"\r\n`;
         raw += `\r\n`;
-        raw += replyText;
+        raw += `--${boundary}\r\n`;
+        raw += `Content-Type: text/plain; charset=utf-8\r\n`;
+        raw += `Content-Transfer-Encoding: quoted-printable\r\n`;
+        raw += `\r\n`;
+        raw += fullText.replace(/\r?\n/g, '\r\n');
+        raw += `\r\n`;
+        raw += `--${boundary}\r\n`;
+        raw += `Content-Type: text/html; charset=utf-8\r\n`;
+        raw += `Content-Transfer-Encoding: quoted-printable\r\n`;
+        raw += `\r\n`;
+        raw += fullHtml.replace(/\r?\n/g, '\r\n');
+        raw += `\r\n`;
+        raw += `--${boundary}--\r\n`;
 
         await client.append(sentFolder, Buffer.from(raw), ['\\Seen'], new Date());
         console.log(`[IMAP] ✓ Saved to "${sentFolder}"`);
       } else {
-        console.warn(`[IMAP] Could not find Sent folder — skipping append`);
+        console.warn(`[IMAP] Could not find Sent folder`);
       }
     } catch (appendErr) {
       console.warn(`[IMAP] Append to Sent failed: ${appendErr.message}`);

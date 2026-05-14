@@ -181,6 +181,9 @@ async function sendScheduledReplies() {
       from_name: row.from_name,
       subject: row.subject,
       message_id: row.message_id,
+      body_text: row.body_text,
+      body_html: row.body_html,
+      received_at: row.received_at,
     };
 
     console.log(`[SEND] Sending reply to ${email.from_email} (email #${email.id})...`);
