@@ -382,6 +382,76 @@ app.get('/api/approval-queue', resolveTenantAuth, (req, res) => {
   res.json(queue);
 });
 
+// Bulk update URLs in all draft replies (swap old URLs for fresh rotated ones)
+app.post('/api/approval-queue/update-urls', resolveTenantAuth, (req, res) => {
+  try {
+    const ts = getTenantStmts(req.tenantId);
+    const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
+    const queue = accountId
+      ? ts.getApprovalQueueByAccount.all(req.tenantId, accountId)
+      : ts.getApprovalQueue.all(req.tenantId);
+
+    if (queue.length === 0) {
+      return res.json({ success: true, updated: 0, message: 'No drafts in queue' });
+    }
+
+    // Get current campaign URLs for rotation
+    const newUrls = getTenantCampaignUrls(req.tenantId);
+    if (newUrls.length === 0) {
+      return res.status(400).json({ error: 'No campaign URLs configured. Set them in Settings first.' });
+    }
+
+    // Also accept an explicit old_url to replace (optional)
+    const oldUrl = req.body.old_url || '';
+
+    let updated = 0;
+    let urlIdx = 0; // rotate through new URLs
+
+    for (const email of queue) {
+      if (!email.reply_text) continue;
+
+      let newText = email.reply_text;
+      const freshUrl = newUrls[urlIdx % newUrls.length];
+      urlIdx++;
+
+      if (oldUrl) {
+        // Replace specific old URL
+        if (newText.includes(oldUrl)) {
+          newText = newText.split(oldUrl).join(freshUrl);
+        } else {
+          continue; // skip if old URL not found in this draft
+        }
+      } else {
+        // Auto-detect: replace any https:// URL that looks like a campaign link
+        // Match URLs that are NOT common email/image patterns
+        newText = newText.replace(
+          /https?:\/\/(?!(?:www\.)?(?:linkedin\.com|google\.com|outlook\.com|office\.com|microsoft\.com|gmail\.com|yahoo\.com))[^\s,)"'>]+/gi,
+          (match) => {
+            // Don't replace unsubscribe links, tracking pixels, etc.
+            if (/unsubscribe|tracking|pixel|click\.|open\.|mail\./i.test(match)) return match;
+            return freshUrl;
+          }
+        );
+      }
+
+      if (newText !== email.reply_text) {
+        globalStmts.updateEmailReply.run({
+          reply_status: 'draft',
+          reply_text: newText,
+          reply_scheduled_for: null,
+          id: email.id,
+        });
+        updated++;
+      }
+    }
+
+    logActivity(req.tenantId, null, 'settings', `Bulk URL update: ${updated} draft(s) updated`, newUrls.join(', '));
+    res.json({ success: true, updated, total: queue.length, new_urls: newUrls });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/emails/:id/approve', resolveTenantAuth, (req, res) => {
   const ts = getTenantStmts(req.tenantId);
   const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);

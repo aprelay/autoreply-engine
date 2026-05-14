@@ -223,6 +223,7 @@
           <div class="toolbar">
             <button class="btn btn-secondary btn-sm" onclick="loadApprovalQueue()"><i class="fas fa-sync"></i> Refresh</button>
             <button class="btn btn-primary btn-sm" onclick="processPendingEmails()"><i class="fas fa-bolt"></i> Process Pending Emails</button>
+            <button class="btn btn-warning btn-sm" onclick="bulkUpdateUrls()"><i class="fas fa-link"></i> Update URLs</button>
             <span style="font-size:12px;color:var(--text3)" id="approvalInfo"></span>
           </div>
           <div id="approvalList"></div>
@@ -1266,6 +1267,28 @@
         const r = await fetch(API('/emails/process-pending'), { method:'POST' }).then(r => r.json());
         if (r.success) { toast(`Processed ${r.processed} email(s), ${r.realReplies} real replies`, 'success'); loadStats(); loadApprovalQueue(); loadEmails(); }
         else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    // ─── Bulk Update URLs in Drafts ───
+    async function bulkUpdateUrls() {
+      const oldUrl = prompt('Enter the OLD URL to replace (leave empty to auto-detect and replace all campaign links):', '');
+      if (oldUrl === null) return; // cancelled
+
+      const acctFilter = selectedAccountId ? `?account_id=${selectedAccountId}` : '';
+      toast('Updating URLs in draft replies...', 'info');
+      try {
+        const r = await fetch(API('/approval-queue/update-urls' + acctFilter), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ old_url: oldUrl })
+        }).then(r => r.json());
+        if (r.success) {
+          toast(`URLs updated in ${r.updated} of ${r.total} draft(s)`, 'success');
+          loadApprovalQueue();
+        } else {
+          toast(r.error || 'Failed', 'error');
+        }
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
