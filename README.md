@@ -1,206 +1,244 @@
-# Token Sender Express v2.4.0
+# Autoreply Engine v2.0 — Multi-Tenant
 
-> Full-featured email campaign manager — Express.js + better-sqlite3 edition for Railway deployment.
+> Automated email reply system with AI classification, smart contextual replies, and multi-tenant isolation. Node.js/Express + better-sqlite3 + OpenRouter AI.
 
-Ported 1:1 from the Cloudflare Workers (Hono/D1) version to run as a standalone Node.js server with SQLite persistence.
+## Architecture
+
+```
+Master Account (you)
+├── Global AI config (OpenRouter API key, model)
+├── Engine controls (start/stop polling)
+├── All tenant management (create/edit/delete children)
+│
+├── Child Tenant 1 (independent dashboard)
+│   ├── Own email accounts
+│   ├── Own campaign URLs
+│   ├── Own guard settings (reply limits, cooldown)
+│   ├── Optional: own AI key (or inherits master's)
+│   └── Own activity log + email history
+│
+├── Child Tenant 2 ...
+└── Child Tenant N ...
+```
+
+**Key concept:** Each child tenant is a fully independent autoreply system with its own accounts, settings, and URLs — but the master controls the engine and can push AI config updates to all children via inheritance.
 
 ## Quick Start
 
 ```bash
 npm install
-node server.js
-# → http://localhost:3000
+node src/server.js
+# → http://localhost:3000/?pw=admin123
 ```
 
-## Deploy to Railway
-
-### Option 1: One-Click (Dockerfile)
-1. Push this repo to GitHub
-2. Connect to Railway → New Project → Deploy from GitHub
-3. Add a **Volume** mounted at `/app/data` (for SQLite persistence)
-4. Railway auto-detects the Dockerfile and deploys
-
-### Option 2: Manual
+With PM2 (recommended):
 ```bash
-railway login
-railway init
-railway up
-# Add volume: Railway Dashboard → Service → Volumes → Mount at /app/data
+pm2 start ecosystem.config.cjs
+pm2 logs --nostream
 ```
 
-### Important: Add a Volume!
-Railway containers are ephemeral. **You must attach a persistent volume** mounted at `/app/data` to keep your SQLite database between deploys.
+## Authentication
 
-## Environment Variables
+URL-based auth with password + tenant slug:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Server port (Railway auto-sets this) |
-| `DB_PATH` | `./data/token-sender.db` | SQLite database path |
-| `NODE_ENV` | `production` | Node environment |
+| Access Level | URL Pattern | Description |
+|---|---|---|
+| **Master** | `/?pw=MASTER_PASSWORD` | Full access to all tenants + engine |
+| **Child Tenant** | `/?tenant=SLUG&pw=TENANT_PASSWORD` | Scoped access to one tenant only |
 
-## Architecture
+- Master password = the password set on the master tenant row
+- Each child tenant gets a unique slug + auto-generated password on creation
+- All API calls require `?pw=` param (and optionally `&tenant=SLUG`)
+
+## API Endpoints
+
+### Auth & Info
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/whoami` | any | Returns current auth context (tenant_id, name, slug, is_master) |
+| GET | `/api/stats` | any | Master: global stats. Tenant: scoped stats |
+
+### Tenant Management (Master Only)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tenants` | List all tenants |
+| POST | `/api/tenants` | Create child tenant → returns slug + password |
+| PUT | `/api/tenants/:id` | Update tenant settings |
+| DELETE | `/api/tenants/:id` | Delete child tenant (cannot delete master) |
+
+### Email Accounts (Tenant-Scoped)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/accounts` | List accounts for current tenant |
+| POST | `/api/accounts` | Add email account |
+| PUT | `/api/accounts/:id` | Update account |
+| DELETE | `/api/accounts/:id` | Delete account |
+
+### Emails (Tenant-Scoped)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/emails` | List emails (query: `?limit=50`) |
+| GET | `/api/emails/:id` | Get single email with full details |
+| POST | `/api/emails/:id/approve` | Approve draft reply for sending |
+| POST | `/api/emails/:id/skip` | Skip/reject a draft reply |
+| PUT | `/api/emails/:id/reply` | Edit reply text before approval |
+| GET | `/api/approval-queue` | Emails pending approval |
+
+### Settings (Tenant-Scoped)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings` | Get all settings for current tenant |
+| PUT | `/api/settings` | Update settings (AI config, URLs, guard, password) |
+
+### Training Messages (Tenant-Scoped)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/training` | List training messages |
+| POST | `/api/training` | Add training message |
+| PUT | `/api/training/:id` | Update training message |
+| DELETE | `/api/training/:id` | Delete training message |
+
+### Activity Log (Tenant-Scoped)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/activity` | Recent activity (query: `?limit=50`) |
+
+### Engine Controls (Master Only)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/engine/start` | Start the poll engine |
+| POST | `/api/engine/stop` | Stop the poll engine |
+| POST | `/api/engine/poll/:accountId` | Force poll a specific account |
+
+## Data Model
+
+### Tenants Table
+```
+tenants
+├── id, slug, name, password
+├── is_master (1 = master, 0 = child)
+├── is_active
+├── ai_provider, ai_api_key, ai_model, ai_base_url
+├── poll_interval_sec, max_replies_per_sender, sender_cooldown_hours
+├── campaign_url_1 ... campaign_url_5
+└── notes, created_at, updated_at
+```
+
+### AI Config Inheritance
+- If a child tenant has `ai_api_key` set → uses its own AI config
+- If a child tenant has NO `ai_api_key` → inherits master's AI config
+- This means you only need ONE OpenRouter API key (on master) for all tenants
+
+### Other Tables (all have `tenant_id` FK)
+- **accounts** — IMAP/SMTP email accounts with persona, campaign, mode settings
+- **emails** — Received emails with classification, reply status, reply text
+- **activity_log** — All system events (fetch, classify, reply, errors)
+- **training_messages** — Custom AI training examples per tenant
+- **settings** — Tenant-scoped key-value pairs (legacy, mostly migrated to tenant columns)
+
+## Email Processing Pipeline
 
 ```
-Express.js (Node 20)
-├── server.js          — Single-file server with all 81 API routes
-├── public/            — Static frontend (SPA)
-│   ├── index.html     — Main app (122KB)
-│   └── static/
-│       ├── app.js     — Frontend JS (52KB)
-│       ├── style.css  — Styles
-│       └── favicon.svg
-├── data/              — SQLite database (auto-created)
-├── Dockerfile         — Docker build for Railway
-├── railway.json       — Railway deployment config
-└── Procfile           — Process file
+1. POLL → IMAP fetch new emails (per account, per tenant)
+2. CLASSIFY → AI categorizes: real_reply, auto_reply, newsletter, spam, bounce, etc.
+3. GUARD → Check reply limits (max per sender, cooldown hours)
+4. REPLY → AI generates contextual reply with campaign URL injection
+5. SCHEDULE → Queue with random delay (min_delay_sec to max_delay_sec)
+6. SEND → SMTP send when scheduled time arrives
 ```
 
-## Key Differences from Cloudflare Workers Version
+**Modes per account:**
+- `auto` — Classify + reply automatically
+- `approval` — Classify + draft reply, wait for human approval
+- `paused` — Skip this account entirely
 
-| Feature | Cloudflare Workers | Express.js (Railway) |
-|---------|-------------------|---------------------|
-| Runtime | Cloudflare Workers | Node.js 20 |
-| Database | D1 (distributed SQLite) | better-sqlite3 (local) |
-| Auth | Web Crypto API (SHA-256) | Node.js crypto module |
-| Sessions | In-memory Map | In-memory Map |
-| File uploads | FormData API | multer middleware |
-| SSE streams | TransformStream | res.write() |
-| Background tasks | waitUntil() | async fire-and-forget |
-| Deploy target | Cloudflare Pages | Railway / Docker |
+## AI Configuration
 
-## API Routes (81 total)
+### Default: OpenRouter (Free Tier)
+- Provider: `openrouter`
+- Model: `deepseek/deepseek-v4-flash:free`
+- Fallback chain: `nvidia/nemotron-3-super-120b-a12b:free` → `google/gemma-4-31b-it:free` → `meta-llama/llama-3.3-70b-instruct:free` → `qwen/qwen3-next-80b-a3b-instruct:free`
 
-### Health
-- `GET /health` — Health check
-- `GET /api/health` — API health
+### Reply Quality Guards
+- Non-ASCII character limit (rejects garbled AI output)
+- Minimum/maximum length checks
+- Template fallback when all AI models fail
 
-### Authentication
-- `POST /api/auth/register` — Register with token
-- `POST /api/auth/login` — Login
-- `POST /api/auth/check` — Check session
-- `POST /api/auth/logout` — Logout
-- `GET /api/auth/status` — Auth status
-- `POST /api/auth/from-source` — Auth from token source
-- `POST /api/auth/clear` — Clear all accounts
-- `GET /api/auth/available-tokens` — List available tokens
+## File Structure
 
-### Access Password
-- `GET /api/access/status` — Check if password set
-- `POST /api/access/setup` — Set initial password
-- `POST /api/access/verify` — Verify password
-- `POST /api/access/reset` — Reset password
+```
+webapp/
+├── src/
+│   ├── server.js          — Express API server (~31KB)
+│   ├── database.js        — SQLite schema, migration, prepared statements
+│   ├── ai-classifier.js   — OpenRouter AI classification + reply generation
+│   ├── email-engine.js    — IMAP fetch + SMTP send
+│   └── orchestrator.js    — Poll loop, scheduling, cross-tenant coordination
+├── public/
+│   └── index.html         — Full dashboard SPA (~90KB)
+├── data/
+│   └── autoreply.db       — SQLite database (auto-created)
+├── ecosystem.config.cjs   — PM2 configuration
+├── package.json
+└── README.md
+```
 
-### Accounts
-- `GET /api/accounts` — List accounts
-- `GET /api/accounts/active` — Get active account
-- `POST /api/accounts/set-active` — Set active account
-- `POST /api/accounts/add-from-source` — Add from token source
-- `POST /api/accounts/add-manual` — Add with refresh token
-- `DELETE /api/accounts/:id` — Delete account
-- `POST /api/accounts/:id/test` — Test account tokens
-- `POST /api/accounts/:id/reset-count` — Reset send count
+## Deployment
 
-### Leads
-- `GET /api/leads` — Get leads
-- `POST /api/leads/extract-stream` — Extract via SSE (full mailbox scan)
-- `POST /api/leads/extract` — Extract (quick, non-stream)
-- `POST /api/leads/test` — Set test leads
-- `DELETE /api/leads/clear` — Clear leads
-- `POST /api/leads/set` — Set leads
-- `POST /api/leads/upload` — Upload leads
-- `POST /api/leads/filter` — Filter leads
+### NOT compatible with Cloudflare Workers/Pages
+This app uses native Node.js addons (better-sqlite3), persistent IMAP connections, filesystem access, and long-running server processes — none of which are supported by Cloudflare Workers.
 
-### MX Sort
-- `POST /api/mx-sort` — Classify emails by MX
-- `POST /api/mx-sort/stream` — MX sort with SSE progress
-- `GET /api/mx-sort/results` — Get cached results
-- `POST /api/mx-sort/validate` — Validate emails
-- `POST /api/mx-sort/to-campaign` — Create campaign from MX groups
+### Recommended Platforms
+| Platform | Cost | Notes |
+|----------|------|-------|
+| **Railway** | ~$5/mo | Easiest. Add volume at `/app/data` for SQLite persistence |
+| **Fly.io** | ~$5/mo | Good performance. Use persistent volume |
+| **DigitalOcean** | $6/mo | Droplet with PM2 |
+| **Hetzner** | ~$4/mo | Best value VPS |
+| **Oracle Cloud** | Free | Always-free tier ARM instance |
 
-### Templates
-- `GET /api/templates` — List templates
-- `GET /api/templates/:name` — Get template
-- `POST /api/templates` — Create template
-- `PUT /api/templates/:name` — Update template
-- `POST /api/templates/upload` — Upload template file
-- `POST /api/templates/:name/duplicate` — Duplicate template
-- `DELETE /api/templates/:name` — Delete template
-- `GET /api/templates/:name/preview` — Preview with variables
+### Railway Deploy
+```bash
+# Push to GitHub, connect Railway, add volume at /app/data
+railway login && railway init && railway up
+```
 
-### Sending
-- `POST /api/send` — Campaign send (TO/BCC)
-- `POST /api/send/image` — Image email send
-- `POST /api/send/msg-to-image` — Template as image
-- `POST /api/send/attachment` — Attachment send
+### VPS Deploy (DigitalOcean, Hetzner, etc.)
+```bash
+git clone <your-repo> && cd webapp
+npm install
+pm2 start ecosystem.config.cjs
+pm2 save && pm2 startup
+```
 
-### Campaigns
-- `GET /api/campaigns` — List campaigns
-- `GET /api/campaigns/:id` — Get campaign details
-- `POST /api/campaigns` — Create campaign
-- `POST /api/campaigns/:id/start` — Start campaign
-- `POST /api/campaigns/:id/pause` — Pause campaign
-- `POST /api/campaigns/:id/resume` — Resume campaign
-- `DELETE /api/campaigns/:id` — Delete campaign
+## Multi-Tenant Workflow
 
-### Analytics & Logs
-- `GET /api/analytics` — Get analytics
-- `GET /api/analytics/summary` — Summary with trends
-- `DELETE /api/analytics/reset` — Reset analytics
-- `GET /api/logs` — Delivery logs
-- `DELETE /api/logs/clear` — Clear logs
-- `GET /api/logs/export` — Export CSV
+### Creating a Child Tenant (Master Dashboard)
+1. Go to **Tenant Management** panel
+2. Click **Create Tenant**
+3. Enter name and optional settings
+4. Copy the generated **Dashboard URL**, **slug**, and **password**
+5. Share the URL with the child tenant operator
 
-### Settings
-- `GET /api/settings` — Get all settings
-- `PUT /api/settings` — Update settings
-- `GET /api/token-source` — Get token source URL
-- `PUT /api/token-source` — Set token source URL
+### Child Tenant Independence
+Each child tenant can independently:
+- Add/remove their own email accounts
+- Set their own campaign URLs (5 slots)
+- Configure reply limits and cooldown
+- Manage their own training messages
+- View their own email history and activity log
+- Optionally set their own AI API key
 
-### Verification
-- `POST /api/verify` — Verify emails (built-in)
-- `POST /api/verify/check-api` — Check MillionVerifier API key
+### What Only Master Can Do
+- Create/delete child tenants
+- Start/stop the polling engine
+- See global stats across all tenants
+- Force-poll any account
 
-### Deploy System
-- `GET /api/deploy/version` — Get version
-- `GET /api/deploy/status` — Deploy status
-- `POST /api/deploy/enable-master` — Enable master mode
-- `POST /api/deploy/disable-master` — Disable master mode
-- `GET /api/deploy/children` — List child deployments
-- `POST /api/deploy/register-child` — Register child
-- `DELETE /api/deploy/children/:id` — Delete child
-- `POST /api/deploy/set-version` — Set version
-- `POST /api/deploy/snapshot` — Take deployment snapshot
-- `POST /api/deploy/upload-worker` — Upload worker JS
-- `GET /api/deploy/snapshot-status` — Snapshot status
-- `POST /api/deploy/push-update` — Push update to children
+## Version History
 
-### System
-- `GET /api/system/status` — Full system status
-- `POST /api/proxy/test` — Test proxy connectivity
-
-## Send Providers
-
-| Provider | API | Notes |
-|----------|-----|-------|
-| **Graph** | Microsoft Graph /me/sendMail | Default, most reliable |
-| **EWS** | Exchange Web Services SOAP | Fallback for Graph issues |
-| **OWA** | Outlook REST API v2.0 | Secondary fallback |
-| **Auto** | Tries graph → ews → owa | Maximum deliverability |
-
-## Anti-Flagging Features
-- Jittered send delays (0.7x-1.8x base delay)
-- Subject rotation across multiple subjects
-- Account rotation (round-robin, random, least-used)
-- Footer randomization with template variables
-- HTML structure variation (table wrappers)
-- Zero-width character injection (sparse)
-- CSS class prefix randomization
-- X-header variation (MS Exchange compatible)
-- Content uniqueness via tracking pixel salt
-- Auto-pause on consecutive errors
-- Daily limit per account
-- Throttle: configurable per minute/hour/day
-
-## Version
-2.4.0 — Express.js / Railway Edition
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.0 | 2026-05-14 | Multi-tenant architecture, master/child isolation, tenant CRUD, AI inheritance |
+| 1.8 | 2026-05-14 | Smart contextual template replies, intelligent name extraction |
+| 1.0 | 2026-05-14 | Initial autoreply engine with AI classification |
