@@ -101,6 +101,15 @@ db.exec(`
     value TEXT NOT NULL DEFAULT ''
   );
 
+  -- Training messages (example replies the AI learns from)
+  CREATE TABLE IF NOT EXISTS training_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   -- Indexes
   CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id);
   CREATE INDEX IF NOT EXISTS idx_emails_status ON emails(reply_status);
@@ -119,6 +128,12 @@ insertSetting.run('ai_provider', 'gemini');
 insertSetting.run('ai_api_key', '');
 insertSetting.run('ai_model', 'gemini-2.0-flash');
 insertSetting.run('ai_base_url', '');
+// Campaign URL rotation (up to 5 URLs, randomly selected per reply)
+insertSetting.run('campaign_url_1', '');
+insertSetting.run('campaign_url_2', '');
+insertSetting.run('campaign_url_3', '');
+insertSetting.run('campaign_url_4', '');
+insertSetting.run('campaign_url_5', '');
 // Migrate old settings if they exist
 const oldKey = db.prepare("SELECT value FROM settings WHERE key='openai_api_key'").get();
 if (oldKey?.value) {
@@ -195,6 +210,14 @@ const stmts = {
     UPDATE emails SET reply_status='skipped', classification_reason=? WHERE id=?
   `),
   approveEmail: db.prepare("UPDATE emails SET reply_status='scheduled', reply_scheduled_for=datetime('now') WHERE id=?"),
+
+  // Training messages
+  getTrainingMessages: db.prepare('SELECT * FROM training_messages ORDER BY created_at DESC'),
+  getActiveTrainingMessages: db.prepare('SELECT * FROM training_messages WHERE is_active = 1 ORDER BY created_at ASC'),
+  getTrainingMessage: db.prepare('SELECT * FROM training_messages WHERE id = ?'),
+  insertTrainingMessage: db.prepare('INSERT INTO training_messages (label, content) VALUES (@label, @content)'),
+  updateTrainingMessage: db.prepare('UPDATE training_messages SET label=@label, content=@content, is_active=@is_active WHERE id=@id'),
+  deleteTrainingMessage: db.prepare('DELETE FROM training_messages WHERE id = ?'),
 
   // Activity
   getActivity: db.prepare('SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?'),

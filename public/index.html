@@ -114,7 +114,7 @@
     <div class="sidebar">
       <div class="sidebar-header">
         <h1><i class="fas fa-robot"></i> AutoReply</h1>
-        <div class="version">v1.0 Enterprise</div>
+        <div class="version">v1.3 Enterprise</div>
       </div>
       <div class="nav-section">
         <div class="nav-label">Dashboard</div>
@@ -135,6 +135,12 @@
         </div>
         <div class="nav-item" data-panel="activity" onclick="switchPanel('activity')">
           <span class="icon"><i class="fas fa-history"></i></span> Activity Log
+        </div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">AI Training</div>
+        <div class="nav-item" data-panel="training" onclick="switchPanel('training')">
+          <span class="icon"><i class="fas fa-graduation-cap"></i></span> Training Messages
         </div>
       </div>
       <div class="nav-section">
@@ -207,6 +213,22 @@
           <div id="activityList"></div>
         </div>
 
+        <!-- TRAINING MESSAGES -->
+        <div class="panel" id="panel-training">
+          <div class="toolbar">
+            <button class="btn btn-primary btn-sm" onclick="showAddTrainingModal()"><i class="fas fa-plus"></i> Add Training Message</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadTrainingMessages()"><i class="fas fa-sync"></i> Refresh</button>
+            <span style="font-size:12px;color:var(--text3)" id="trainingInfo"></span>
+          </div>
+          <div class="card" style="background:rgba(99,102,241,.05);border-color:rgba(99,102,241,.2)">
+            <div style="font-size:12px;color:var(--text2);line-height:1.6">
+              <i class="fas fa-info-circle" style="color:var(--accent);margin-right:4px"></i>
+              <strong>How it works:</strong> Paste example replies you've written. The AI will study your tone, phrasing, greeting style, and sign-off to generate replies that sound like you. Active messages are included in every AI reply prompt. Toggle messages on/off to control which examples the AI uses.
+            </div>
+          </div>
+          <div id="trainingList"></div>
+        </div>
+
         <!-- SETTINGS -->
         <div class="panel" id="panel-settings">
           <div class="card">
@@ -249,6 +271,32 @@
             <div class="form-group">
               <label>Poll Interval (seconds)</label>
               <input class="form-input" id="setPollInterval" type="number" min="30" max="600" value="120">
+            </div>
+          </div>
+          <div class="card">
+            <h3><i class="fas fa-link"></i> Campaign URL Rotation</h3>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:12px">
+              Enter up to 5 campaign URLs. The system will randomly pick one for each reply. Leave empty slots blank.
+            </div>
+            <div class="form-group">
+              <label>Campaign URL #1</label>
+              <input class="form-input" id="setCampaignUrl1" placeholder="https://yourdomain.com/link1">
+            </div>
+            <div class="form-group">
+              <label>Campaign URL #2</label>
+              <input class="form-input" id="setCampaignUrl2" placeholder="https://yourdomain.com/link2">
+            </div>
+            <div class="form-group">
+              <label>Campaign URL #3</label>
+              <input class="form-input" id="setCampaignUrl3" placeholder="https://yourdomain.com/link3">
+            </div>
+            <div class="form-group">
+              <label>Campaign URL #4</label>
+              <input class="form-input" id="setCampaignUrl4" placeholder="https://yourdomain.com/link4">
+            </div>
+            <div class="form-group">
+              <label>Campaign URL #5</label>
+              <input class="form-input" id="setCampaignUrl5" placeholder="https://yourdomain.com/link5">
             </div>
           </div>
           <button class="btn btn-primary" onclick="saveSettings()"><i class="fas fa-save"></i> Save Settings</button>
@@ -349,6 +397,30 @@
     </div>
   </div>
 
+  <!-- TRAINING MESSAGE MODAL -->
+  <div class="modal-overlay" id="trainingModal">
+    <div class="modal" style="max-width:650px">
+      <div class="modal-header">
+        <h3 id="trainingModalTitle"><i class="fas fa-graduation-cap"></i> Add Training Message</h3>
+        <button class="btn-ghost" onclick="closeModal('trainingModal')"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Label <span style="font-weight:normal;color:var(--text3)">(optional — e.g. "Friendly follow-up", "Cold intro")</span></label>
+          <input class="form-input" id="trainLabel" placeholder="Give this example a label for reference">
+        </div>
+        <div class="form-group">
+          <label>Example Reply Message *</label>
+          <textarea class="form-textarea" id="trainContent" rows="12" placeholder="Paste an example reply you've written here. The AI will study your tone, phrasing, greeting style, and sign-off to match your writing style.&#10;&#10;Example:&#10;Hi Mike,&#10;&#10;Thanks for getting back to me. I took a look at the scope you outlined and it lines up well with what we handle.&#10;&#10;I put together a quick overview of our process and availability here: https://example.com/schedule&#10;&#10;Let me know if Thursday or Friday works for a quick call.&#10;&#10;Best,&#10;Keith Tetreault&#10;Estimator" style="min-height:220px"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('trainingModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTrainingMessage()"><i class="fas fa-save"></i> Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST -->
   <div class="toast-container" id="toastContainer"></div>
 
@@ -362,6 +434,9 @@
     let currentPanel = 'overview';
     let accountsCache = [];
     let editingAccountId = null;
+    let editingTrainingId = null;
+    let lastEmailCount = 0;
+    let autoSyncInterval = null;
 
     // ─── Init ───
     async function init() {
@@ -370,12 +445,28 @@
       await loadApprovalQueue();
       await loadAccounts();
       checkEngineStatus();
-      // Refresh every 15s
-      setInterval(() => {
-        loadStats();
-        checkEngineStatus();
-        if (currentPanel === 'approval') loadApprovalQueue();
-      }, 15000);
+      // Auto-sync: refresh active panel + stats every 12s
+      autoSyncInterval = setInterval(autoSync, 12000);
+    }
+
+    // ─── Auto-Sync (refreshes whatever panel is active + stats) ───
+    async function autoSync() {
+      try {
+        const prevCount = lastEmailCount;
+        await loadStats();
+        await checkEngineStatus();
+        // Refresh active panel data
+        if (currentPanel === 'approval') await loadApprovalQueue();
+        else if (currentPanel === 'emails') await loadEmails();
+        else if (currentPanel === 'activity') await loadActivity();
+        else if (currentPanel === 'overview') await loadActivity();
+        else if (currentPanel === 'training') await loadTrainingMessages();
+        // Notify if new emails arrived
+        if (lastEmailCount > prevCount && prevCount > 0) {
+          const diff = lastEmailCount - prevCount;
+          toast(`${diff} new email${diff > 1 ? 's' : ''} received`, 'info');
+        }
+      } catch(e) { console.error('Auto-sync error:', e); }
     }
 
     // ─── Navigation ───
@@ -387,13 +478,14 @@
       if (panel) panel.classList.add('active');
       const nav = document.querySelector(`.nav-item[data-panel="${name}"]`);
       if (nav) nav.classList.add('active');
-      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', settings:'Settings' };
+      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', settings:'Settings' };
       document.getElementById('topbarTitle').textContent = titles[name] || name;
       if (name === 'emails') loadEmails();
       if (name === 'approval') loadApprovalQueue();
       if (name === 'accounts') loadAccounts();
       if (name === 'activity') loadActivity();
       if (name === 'settings') loadSettings();
+      if (name === 'training') loadTrainingMessages();
     }
 
     // ─── Stats ───
@@ -410,6 +502,8 @@
           <div class="stat-card"><div class="label">Failed</div><div class="value" style="color:var(--red)">${r.failed||0}</div></div>
           <div class="stat-card"><div class="label">Engine</div><div class="value" style="font-size:14px;color:${r.engine_running?'var(--green)':'var(--red)'}">${r.engine_running?'RUNNING':'STOPPED'}</div></div>
         `;
+        // Track total email count for auto-sync new-email detection
+        lastEmailCount = r.total_emails || 0;
         // Update approval badge
         const badge = document.getElementById('navApprovalCount');
         if ((r.pending_approval||0) > 0) { badge.style.display='inline'; badge.textContent=r.pending_approval; }
@@ -828,7 +922,21 @@
         document.getElementById('setAiModel').value = s.ai_model || 'gemini-2.0-flash';
         document.getElementById('setAiBaseUrl').value = s.ai_base_url || '';
         document.getElementById('setPollInterval').value = s.poll_interval_sec || '120';
+        // Load campaign URLs
+        loadCampaignUrls();
       } catch(e) {}
+    }
+
+    async function loadCampaignUrls() {
+      try {
+        const r = await fetch(API('/campaign-urls')).then(r => r.json());
+        if (r.urls) {
+          for (let i = 0; i < 5; i++) {
+            const el = document.getElementById(`setCampaignUrl${i+1}`);
+            if (el) el.value = r.urls[i] || '';
+          }
+        }
+      } catch(e) { console.error('Campaign URLs load error:', e); }
     }
 
     async function saveSettings() {
@@ -841,9 +949,107 @@
         poll_interval_sec: document.getElementById('setPollInterval').value,
       };
       try {
+        // Save general settings
         const r = await fetch(API('/settings'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) }).then(r => r.json());
-        if (r.success) toast('Settings saved', 'success');
+        // Save campaign URLs
+        const urls = [];
+        for (let i = 1; i <= 5; i++) {
+          const el = document.getElementById(`setCampaignUrl${i}`);
+          urls.push(el ? el.value.trim() : '');
+        }
+        await fetch(API('/campaign-urls'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ urls }) });
+        if (r.success) toast('Settings & campaign URLs saved', 'success');
         else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    // ─── Training Messages ───
+    async function loadTrainingMessages() {
+      try {
+        const msgs = await fetch(API('/training-messages')).then(r => r.json());
+        const active = msgs.filter(m => m.is_active).length;
+        document.getElementById('trainingInfo').textContent = `${msgs.length} message(s), ${active} active`;
+        if (!msgs.length) {
+          document.getElementById('trainingList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-graduation-cap"></i></div><h3>No training messages yet</h3><p>Add example replies so the AI can learn your writing style</p></div>';
+          return;
+        }
+        document.getElementById('trainingList').innerHTML = msgs.map(m => `
+          <div class="card" style="border-left:3px solid ${m.is_active?'var(--green)':'var(--text3)'}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                  ${m.label ? `<span style="font-size:13px;font-weight:600">${esc(m.label)}</span>` : '<span style="font-size:13px;color:var(--text3);font-style:italic">Unlabeled example</span>'}
+                  <span class="badge-pill ${m.is_active?'badge-green':'badge-gray'}">${m.is_active?'Active':'Inactive'}</span>
+                </div>
+                <div style="font-size:12px;color:var(--text2);white-space:pre-wrap;max-height:120px;overflow:hidden;background:var(--bg);padding:10px 12px;border-radius:8px;border:1px solid var(--border);font-family:'Consolas','Fira Code',monospace;line-height:1.6">${esc(m.content)}</div>
+                <div style="font-size:10px;color:var(--text3);margin-top:6px">Added ${timeAgo(m.created_at)}</div>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button class="btn ${m.is_active?'btn-secondary':'btn-success'} btn-xs" onclick="toggleTraining(${m.id},${m.is_active?0:1})" title="${m.is_active?'Deactivate':'Activate'}"><i class="fas fa-${m.is_active?'pause':'play'}"></i></button>
+                <button class="btn btn-primary btn-xs" onclick="editTraining(${m.id})" title="Edit"><i class="fas fa-pen"></i></button>
+                <button class="btn btn-danger btn-xs" onclick="deleteTraining(${m.id})" title="Delete"><i class="fas fa-trash"></i></button>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Training messages error:', e); }
+    }
+
+    function showAddTrainingModal() {
+      editingTrainingId = null;
+      document.getElementById('trainingModalTitle').innerHTML = '<i class="fas fa-graduation-cap"></i> Add Training Message';
+      document.getElementById('trainLabel').value = '';
+      document.getElementById('trainContent').value = '';
+      openModal('trainingModal');
+    }
+
+    async function editTraining(id) {
+      try {
+        const msgs = await fetch(API('/training-messages')).then(r => r.json());
+        const m = msgs.find(x => x.id === id);
+        if (!m) { toast('Message not found', 'error'); return; }
+        editingTrainingId = id;
+        document.getElementById('trainingModalTitle').innerHTML = '<i class="fas fa-pen"></i> Edit Training Message';
+        document.getElementById('trainLabel').value = m.label || '';
+        document.getElementById('trainContent').value = m.content || '';
+        openModal('trainingModal');
+      } catch(e) { toast('Error loading message', 'error'); }
+    }
+
+    async function saveTrainingMessage() {
+      const content = document.getElementById('trainContent').value.trim();
+      if (!content) { toast('Message content is required', 'error'); return; }
+      const label = document.getElementById('trainLabel').value.trim();
+      try {
+        if (editingTrainingId) {
+          const r = await fetch(API(`/training-messages/${editingTrainingId}`), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label, content, is_active: 1 }) }).then(r => r.json());
+          if (r.success) { toast('Training message updated', 'success'); closeModal('trainingModal'); loadTrainingMessages(); }
+          else toast(r.error || 'Failed', 'error');
+        } else {
+          const r = await fetch(API('/training-messages'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label, content }) }).then(r => r.json());
+          if (r.id) { toast('Training message added', 'success'); closeModal('trainingModal'); loadTrainingMessages(); }
+          else toast(r.error || 'Failed', 'error');
+        }
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function toggleTraining(id, newActive) {
+      try {
+        const msgs = await fetch(API('/training-messages')).then(r => r.json());
+        const m = msgs.find(x => x.id === id);
+        if (!m) return;
+        await fetch(API(`/training-messages/${id}`), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ label: m.label, content: m.content, is_active: newActive }) });
+        toast(newActive ? 'Message activated' : 'Message deactivated', 'success');
+        loadTrainingMessages();
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function deleteTraining(id) {
+      if (!confirm('Delete this training message? The AI will no longer use it as a style example.')) return;
+      try {
+        await fetch(API(`/training-messages/${id}`), { method:'DELETE' });
+        toast('Training message deleted', 'success');
+        loadTrainingMessages();
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 

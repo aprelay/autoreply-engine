@@ -380,6 +380,67 @@ app.put('/api/settings', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── Training Messages CRUD ───
+app.get('/api/training-messages', requireAuth, (req, res) => {
+  res.json(stmts.getTrainingMessages.all());
+});
+
+app.post('/api/training-messages', requireAuth, (req, res) => {
+  try {
+    const { label, content } = req.body;
+    if (!content || !content.trim()) return res.status(400).json({ error: 'Message content required' });
+    const result = stmts.insertTrainingMessage.run({ label: label || '', content: content.trim() });
+    logActivity(null, 'training', `Training message added: ${(label || 'Untitled').substring(0, 50)}`);
+    res.json({ success: true, id: result.lastInsertRowid });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/training-messages/:id', requireAuth, (req, res) => {
+  try {
+    const existing = stmts.getTrainingMessage.get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const b = req.body;
+    stmts.updateTrainingMessage.run({
+      id: parseInt(req.params.id),
+      label: b.label ?? existing.label,
+      content: b.content ?? existing.content,
+      is_active: b.is_active ?? existing.is_active,
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/training-messages/:id', requireAuth, (req, res) => {
+  const existing = stmts.getTrainingMessage.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  stmts.deleteTrainingMessage.run(req.params.id);
+  logActivity(null, 'training', `Training message deleted: ${(existing.label || 'Untitled').substring(0, 50)}`);
+  res.json({ success: true });
+});
+
+// ─── Campaign URLs ───
+app.get('/api/campaign-urls', requireAuth, (req, res) => {
+  const urls = [];
+  for (let i = 1; i <= 5; i++) {
+    urls.push(stmts.getSetting.get(`campaign_url_${i}`)?.value || '');
+  }
+  res.json({ urls });
+});
+
+app.put('/api/campaign-urls', requireAuth, (req, res) => {
+  const { urls } = req.body;
+  if (!Array.isArray(urls)) return res.status(400).json({ error: 'urls array required' });
+  for (let i = 0; i < 5; i++) {
+    stmts.setSetting.run(`campaign_url_${i + 1}`, (urls[i] || '').trim());
+  }
+  logActivity(null, 'settings', 'Campaign URLs updated', urls.filter(u => u).join(', '));
+  res.json({ success: true });
+});
+
 // ─── Dashboard HTML ───
 app.get('/', (req, res) => {
   res.sendFile(join(__dirname, '..', 'public', 'index.html'));

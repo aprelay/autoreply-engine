@@ -38,27 +38,56 @@ export async function fetchNewEmails(account) {
       // If no new messages since last check, skip the fetch entirely
       if (account.last_uid > 0 && serverUidNext <= account.last_uid + 1) {
         console.log(`[IMAP] No new UIDs for ${account.email} (last: ${account.last_uid}, uidNext: ${serverUidNext})`);
-        // Still update check time
         stmts.updateAccountLastCheck.run(account.last_uid, account.id);
         lock.release();
         await client.logout();
         return [];
       }
 
-      // Fetch messages newer than last known UID
-      const since = account.last_uid > 0 ? `${account.last_uid + 1}:*` : '1:*';
+      // SEARCH for new UIDs first, then fetchOne each — avoids "Command failed"
+      // on servers (like Spacemail) where UID range FETCH with string ranges fails
+      const searchRange = account.last_uid > 0 ? `${account.last_uid + 1}:*` : '1:*';
+      let foundUids = [];
+      try {
+        foundUids = await client.search({ uid: searchRange }, { uid: true });
+        // Filter out UIDs we already processed (in case server returns last_uid)
+        foundUids = foundUids.filter(u => u > account.last_uid);
+      } catch (searchErr) {
+        console.warn(`[IMAP] UID SEARCH failed for ${account.email}: ${searchErr.message} — falling back to sequence fetch`);
+        // Fallback: use sequence-based fetch for last N messages
+        const seqStart = Math.max(1, (status.messages || 1) - 50);
+        for await (const msg of client.fetch(`${seqStart}:*`, { uid: true })) {
+          if (msg.uid > account.last_uid) foundUids.push(msg.uid);
+        }
+      }
+
+      if (foundUids.length === 0) {
+        console.log(`[IMAP] No new messages for ${account.email} after SEARCH (last_uid: ${account.last_uid})`);
+        stmts.updateAccountLastCheck.run(account.last_uid, account.id);
+        lock.release();
+        await client.logout();
+        return [];
+      }
+
+      console.log(`[IMAP] Found ${foundUids.length} new UID(s) for ${account.email}: ${foundUids.join(', ')}`);
       let maxUid = account.last_uid;
       let count = 0;
 
-      // Use FETCH with UID range
-      for await (const message of client.fetch(since, {
-        uid: true,
-        envelope: true,
-        source: true,
-        flags: true,
-      })) {
-        // Skip if we already processed this UID
-        if (message.uid <= account.last_uid) continue;
+      // Fetch each message individually using fetchOne — most reliable method
+      for (const uid of foundUids) {
+        let message;
+        try {
+          message = await client.fetchOne(String(uid), {
+            uid: true,
+            envelope: true,
+            source: true,
+            flags: true,
+          }, { uid: true });
+        } catch (fetchErr) {
+          console.warn(`[IMAP] fetchOne uid ${uid} failed: ${fetchErr.message} — skipping`);
+          continue;
+        }
+        if (!message) continue;
 
         count++;
         if (message.uid > maxUid) maxUid = message.uid;

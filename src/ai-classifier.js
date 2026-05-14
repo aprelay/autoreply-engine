@@ -2,6 +2,7 @@
 // AUTOREPLY ENGINE — AI Email Classifier + Reply Generator
 // Supports: Google Gemini (native), OpenAI-compatible APIs
 // v1.2: Added reply quality validation, retry logic, model fallback
+// v1.3: Training message style learning, 5-URL campaign rotation
 // ═══════════════════════════════════════════════════════════════
 
 import { stmts, logActivity } from './database.js';
@@ -365,6 +366,37 @@ export async function classifyEmail(email) {
   return defaultResult;
 }
 
+// ─── Pick a random campaign URL from the 5-URL rotation settings ───
+function getRandomCampaignUrl(accountFallback) {
+  const urls = [];
+  for (let i = 1; i <= 5; i++) {
+    const row = stmts.getSetting.get(`campaign_url_${i}`);
+    if (row && row.value && row.value.trim()) urls.push(row.value.trim());
+  }
+  if (urls.length > 0) return urls[Math.floor(Math.random() * urls.length)];
+  // Fallback to account-level campaign_link
+  return accountFallback || 'https://example.com';
+}
+
+// ─── Fetch active training messages for style examples ───
+function getTrainingExamples() {
+  try {
+    const msgs = stmts.getActiveTrainingMessages.all();
+    if (!msgs || msgs.length === 0) return '';
+    let section = '\n\nSTYLE EXAMPLES (match this writing style closely):';
+    msgs.forEach((m, i) => {
+      const label = m.label ? ` [${m.label}]` : '';
+      section += `\n--- Example ${i + 1}${label} ---\n${m.content.trim()}`;
+    });
+    section += '\n--- End of examples ---';
+    section += '\nIMPORTANT: Study the tone, phrasing, sentence length, greeting style, and sign-off in the examples above. Your reply MUST sound like it was written by the same person.';
+    return section;
+  } catch (e) {
+    console.warn('[REPLY] Error fetching training messages:', e.message);
+    return '';
+  }
+}
+
 // ─── Generate Reply (with quality validation + retry + fallback) ───
 export async function generateReply(email, account) {
   // Extract first name from sender
@@ -378,9 +410,13 @@ export async function generateReply(email, account) {
 
   const personaName = account.persona_name || account.display_name || account.email.split('@')[0];
   const personaTitle = account.persona_title || '';
-  const campaignLink = account.campaign_link || 'https://example.com';
+  const campaignLink = getRandomCampaignUrl(account.campaign_link);
+  const trainingExamples = getTrainingExamples();
 
-  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink);
+  console.log(`[REPLY] Using campaign URL: ${campaignLink}`);
+  if (trainingExamples) console.log(`[REPLY] Including ${(trainingExamples.match(/--- Example/g)||[]).length} training example(s) in prompt`);
+
+  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples);
   const provider = getProvider();
 
   // Attempt 1: Primary model
@@ -433,7 +469,7 @@ export async function generateReply(email, account) {
 }
 
 // ─── Build the reply generation prompt ───
-function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink) {
+function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples) {
   return `You are writing a reply to a business email. Write a professional, warm, human-sounding reply.
 
 CONTEXT:
@@ -441,6 +477,7 @@ CONTEXT:
 - The recipient's first name is "${firstName}"
 - You must naturally include this link in the reply: ${campaignLink}
 - The link is for scheduling a call / viewing requirements / next steps
+${trainingExamples || ''}
 
 INCOMING EMAIL:
 From: ${email.from_name} <${email.from_email}>
@@ -460,15 +497,17 @@ RULES:
 9. Do NOT use exclamation marks excessively
 10. Do NOT say "I hope this email finds you well" or similar cliches
 11. Write ONLY in English
-12. Do NOT include any code, HTML tags, or special characters
+12. Do NOT include any code, HTML tags, or special characters${trainingExamples ? '\n13. CRITICAL: Your writing style MUST closely match the STYLE EXAMPLES provided above' : ''}
 
 Write ONLY the reply text, nothing else:`;
 }
 
 // ─── Template fallback reply ───
-function buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email) {
+function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUnused, email) {
   const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
   const signoff = personaTitle ? `${personaName}\n${personaTitle}` : personaName;
+  // Use random campaign URL rotation instead of account-level link
+  const link = getRandomCampaignUrl(campaignLinkUnused);
 
   return `${greeting}
 
@@ -476,7 +515,7 @@ Thank you for getting back to us!
 
 I'd love to schedule a call to discuss our project in more detail. Please find our requirements document and availability calendar at the link below:
 
-${campaignLink}
+${link}
 
 Let us know what time works best for you, and we'll make it happen.
 
