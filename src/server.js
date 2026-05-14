@@ -9,7 +9,7 @@ import { dirname, join } from 'path';
 import crypto from 'crypto';
 import {
   tenantStmts, getTenantStmts, globalStmts, logActivity,
-  getTenantAIConfig, getTenantCampaignUrls, getTenantGuardSettings, resolveAIConfig,
+  getTenantAIConfig, getTenantCampaignUrls, getAccountCampaignUrls, getTenantGuardSettings, resolveAIConfig,
 } from './database.js';
 import { fetchNewEmails, sendReply, testImapConnection, testSmtpConnection } from './email-engine.js';
 import { classifyEmail, generateReply, resetAIClient } from './ai-classifier.js';
@@ -260,7 +260,8 @@ app.post('/api/accounts', resolveTenantAuth, (req, res) => {
   try {
     const { email, password, display_name, imap_host, imap_port, smtp_host, smtp_port,
       campaign_name, campaign_link, persona_name, persona_title, reply_style,
-      mode, min_delay_sec, max_delay_sec } = req.body;
+      mode, min_delay_sec, max_delay_sec,
+      campaign_url_1, campaign_url_2, campaign_url_3, campaign_url_4, campaign_url_5 } = req.body;
 
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
@@ -281,6 +282,11 @@ app.post('/api/accounts', resolveTenantAuth, (req, res) => {
       mode: mode || 'approval',
       min_delay_sec: min_delay_sec || 180,
       max_delay_sec: max_delay_sec || 1800,
+      campaign_url_1: campaign_url_1 || '',
+      campaign_url_2: campaign_url_2 || '',
+      campaign_url_3: campaign_url_3 || '',
+      campaign_url_4: campaign_url_4 || '',
+      campaign_url_5: campaign_url_5 || '',
     });
 
     logActivity(req.tenantId, result.lastInsertRowid, 'account_added', `Account added: ${email}`);
@@ -313,6 +319,11 @@ app.put('/api/accounts/:id', resolveTenantAuth, (req, res) => {
       mode: b.mode ?? existing.mode,
       min_delay_sec: b.min_delay_sec ?? existing.min_delay_sec,
       max_delay_sec: b.max_delay_sec ?? existing.max_delay_sec,
+      campaign_url_1: b.campaign_url_1 ?? existing.campaign_url_1 ?? '',
+      campaign_url_2: b.campaign_url_2 ?? existing.campaign_url_2 ?? '',
+      campaign_url_3: b.campaign_url_3 ?? existing.campaign_url_3 ?? '',
+      campaign_url_4: b.campaign_url_4 ?? existing.campaign_url_4 ?? '',
+      campaign_url_5: b.campaign_url_5 ?? existing.campaign_url_5 ?? '',
       is_active: b.is_active ?? existing.is_active,
     });
 
@@ -443,10 +454,12 @@ app.post('/api/approval-queue/update-urls', resolveTenantAuth, (req, res) => {
       return res.json({ success: true, updated: 0, message: 'No drafts in queue' });
     }
 
-    // Get current campaign URLs for rotation
-    const newUrls = getTenantCampaignUrls(req.tenantId);
+    // Get campaign URLs — account-specific if filtering by account, else tenant-level
+    const newUrls = accountId
+      ? getAccountCampaignUrls(accountId, req.tenantId)
+      : getTenantCampaignUrls(req.tenantId);
     if (newUrls.length === 0) {
-      return res.status(400).json({ error: 'No campaign URLs configured. Set them in Settings first.' });
+      return res.status(400).json({ error: 'No campaign URLs configured. Set them in Campaign URLs first.' });
     }
 
     // Also accept an explicit old_url to replace (optional)
@@ -836,35 +849,74 @@ app.delete('/api/training-messages/:id', resolveTenantAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════
-// LEGACY COMPAT ROUTES (campaign-urls, guard-settings)
-// These now read/write from tenant columns directly
+// CAMPAIGN URLs (per-account with tenant fallback)
+// ?account_id=N → read/write that account's URLs
+// No account_id → read/write tenant-level URLs (shared default)
 // ═══════════════════════════════════════════
 
 app.get('/api/campaign-urls', resolveTenantAuth, (req, res) => {
-  const urls = getTenantCampaignUrls(req.tenantId);
-  // Pad to 5
-  while (urls.length < 5) urls.push('');
-  res.json({ urls });
+  const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
+
+  if (accountId) {
+    // Account-specific URLs
+    const ts = getTenantStmts(req.tenantId);
+    const account = ts.getAccount.get(accountId, req.tenantId);
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+
+    const urls = [];
+    for (let i = 1; i <= 5; i++) {
+      urls.push(account[`campaign_url_${i}`] || '');
+    }
+    res.json({ urls, source: 'account', account_id: accountId, account_email: account.email });
+  } else {
+    // Tenant-level URLs (shared default)
+    const urls = getTenantCampaignUrls(req.tenantId);
+    while (urls.length < 5) urls.push('');
+    res.json({ urls, source: 'tenant' });
+  }
 });
 
 app.put('/api/campaign-urls', resolveTenantAuth, (req, res) => {
   const { urls } = req.body;
   if (!Array.isArray(urls)) return res.status(400).json({ error: 'urls array required' });
-  const tenant = tenantStmts.getById.get(req.tenantId);
-  if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+  const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
 
-  tenantStmts.update.run({
-    ...tenant,
-    id: req.tenantId,
-    campaign_url_1: (urls[0] || '').trim(),
-    campaign_url_2: (urls[1] || '').trim(),
-    campaign_url_3: (urls[2] || '').trim(),
-    campaign_url_4: (urls[3] || '').trim(),
-    campaign_url_5: (urls[4] || '').trim(),
-  });
+  if (accountId) {
+    // Update account-specific URLs
+    const ts = getTenantStmts(req.tenantId);
+    const existing = ts.getAccount.get(accountId, req.tenantId);
+    if (!existing) return res.status(404).json({ error: 'Account not found' });
 
-  logActivity(req.tenantId, null, 'settings', 'Campaign URLs updated', urls.filter(u => u).join(', '));
-  res.json({ success: true });
+    ts.updateAccount.run(req.tenantId, {
+      ...existing,
+      id: accountId,
+      campaign_url_1: (urls[0] || '').trim(),
+      campaign_url_2: (urls[1] || '').trim(),
+      campaign_url_3: (urls[2] || '').trim(),
+      campaign_url_4: (urls[3] || '').trim(),
+      campaign_url_5: (urls[4] || '').trim(),
+    });
+
+    logActivity(req.tenantId, accountId, 'settings', `Campaign URLs updated for ${existing.email}`, urls.filter(u => u).join(', '));
+    res.json({ success: true, source: 'account', account_email: existing.email });
+  } else {
+    // Update tenant-level URLs (shared default)
+    const tenant = tenantStmts.getById.get(req.tenantId);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    tenantStmts.update.run({
+      ...tenant,
+      id: req.tenantId,
+      campaign_url_1: (urls[0] || '').trim(),
+      campaign_url_2: (urls[1] || '').trim(),
+      campaign_url_3: (urls[2] || '').trim(),
+      campaign_url_4: (urls[3] || '').trim(),
+      campaign_url_5: (urls[4] || '').trim(),
+    });
+
+    logActivity(req.tenantId, null, 'settings', 'Tenant default campaign URLs updated', urls.filter(u => u).join(', '));
+    res.json({ success: true, source: 'tenant' });
+  }
 });
 
 app.get('/api/guard-settings', resolveTenantAuth, (req, res) => {

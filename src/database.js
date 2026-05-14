@@ -245,6 +245,25 @@ db.exec(`
 `);
 
 // ═══════════════════════════════════════════
+// STEP 3b: Add campaign_url_1..5 to accounts (per-account URLs)
+// Safe migration — adds columns if missing
+// ═══════════════════════════════════════════
+{
+  const addColIfMissing = (table, col, def) => {
+    try { db.prepare(`SELECT ${col} FROM ${table} LIMIT 1`).get(); }
+    catch (e) {
+      console.log(`[DB] Adding ${col} to ${table}...`);
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    }
+  };
+  addColIfMissing('accounts', 'campaign_url_1', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('accounts', 'campaign_url_2', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('accounts', 'campaign_url_3', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('accounts', 'campaign_url_4', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('accounts', 'campaign_url_5', "TEXT NOT NULL DEFAULT ''");
+}
+
+// ═══════════════════════════════════════════
 // STEP 4: Create indexes (safe — all columns now exist)
 // ═══════════════════════════════════════════
 db.exec(`
@@ -328,9 +347,11 @@ function getTenantStmts(tenantId) {
     getActiveAccounts: db.prepare("SELECT * FROM accounts WHERE tenant_id = ? AND is_active = 1 AND mode != 'paused'"),
     insertAccount: db.prepare(`
       INSERT INTO accounts (tenant_id, email, display_name, imap_host, imap_port, smtp_host, smtp_port, password,
-        campaign_name, campaign_link, persona_name, persona_title, reply_style, mode, min_delay_sec, max_delay_sec)
+        campaign_name, campaign_link, persona_name, persona_title, reply_style, mode, min_delay_sec, max_delay_sec,
+        campaign_url_1, campaign_url_2, campaign_url_3, campaign_url_4, campaign_url_5)
       VALUES (?, @email, @display_name, @imap_host, @imap_port, @smtp_host, @smtp_port, @password,
-        @campaign_name, @campaign_link, @persona_name, @persona_title, @reply_style, @mode, @min_delay_sec, @max_delay_sec)
+        @campaign_name, @campaign_link, @persona_name, @persona_title, @reply_style, @mode, @min_delay_sec, @max_delay_sec,
+        @campaign_url_1, @campaign_url_2, @campaign_url_3, @campaign_url_4, @campaign_url_5)
     `),
     updateAccount: db.prepare(`
       UPDATE accounts SET
@@ -340,6 +361,8 @@ function getTenantStmts(tenantId) {
         persona_name=@persona_name, persona_title=@persona_title,
         reply_style=@reply_style, mode=@mode,
         min_delay_sec=@min_delay_sec, max_delay_sec=@max_delay_sec,
+        campaign_url_1=@campaign_url_1, campaign_url_2=@campaign_url_2, campaign_url_3=@campaign_url_3,
+        campaign_url_4=@campaign_url_4, campaign_url_5=@campaign_url_5,
         is_active=@is_active, updated_at=datetime('now')
       WHERE id=@id AND tenant_id=?
     `),
@@ -518,6 +541,21 @@ function getTenantCampaignUrls(tenantId) {
   return urls;
 }
 
+// ─── Helper: get account's campaign URLs (falls back to tenant if none set) ───
+function getAccountCampaignUrls(accountId, tenantId) {
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+  if (account) {
+    const urls = [];
+    for (let i = 1; i <= 5; i++) {
+      const url = account[`campaign_url_${i}`];
+      if (url && url.trim()) urls.push(url.trim());
+    }
+    if (urls.length > 0) return urls;
+  }
+  // Fall back to tenant-level URLs
+  return getTenantCampaignUrls(tenantId);
+}
+
 // ─── Helper: get tenant's guard settings ───
 function getTenantGuardSettings(tenantId) {
   const tenant = tenantStmts.getById.get(tenantId);
@@ -536,6 +574,7 @@ export {
   logActivity,
   getTenantAIConfig,
   getTenantCampaignUrls,
+  getAccountCampaignUrls,
   getTenantGuardSettings,
   resolveAIConfig,
 };

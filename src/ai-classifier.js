@@ -7,7 +7,7 @@
 // v2.0: Multi-tenant — AI config, URLs, training all tenant-scoped
 // ═══════════════════════════════════════════════════════════════
 
-import { globalStmts, logActivity, getTenantAIConfig, getTenantCampaignUrls, getTenantStmts, tenantStmts } from './database.js';
+import { globalStmts, logActivity, getTenantAIConfig, getTenantCampaignUrls, getAccountCampaignUrls, getTenantStmts, tenantStmts } from './database.js';
 
 // ─── Per-tenant AI provider cache ───
 const providerCache = new Map(); // tenantId → { type, apiKey, model, baseUrl }
@@ -429,10 +429,17 @@ export async function classifyEmail(email, tenantId = 1) {
   return defaultResult;
 }
 
-// ─── Pick a random campaign URL (tenant-scoped) ───
-function getRandomCampaignUrl(tenantId, accountFallback) {
-  const urls = getTenantCampaignUrls(tenantId);
-  if (urls.length > 0) return urls[Math.floor(Math.random() * urls.length)];
+// ─── Pick a random campaign URL (account-first, then tenant fallback) ───
+function getRandomCampaignUrl(tenantId, accountFallback, accountId) {
+  // Check account-level URLs first (if accountId provided)
+  if (accountId) {
+    const urls = getAccountCampaignUrls(accountId, tenantId);
+    if (urls.length > 0) return urls[Math.floor(Math.random() * urls.length)];
+  } else {
+    // No accountId — use tenant-level URLs
+    const urls = getTenantCampaignUrls(tenantId);
+    if (urls.length > 0) return urls[Math.floor(Math.random() * urls.length)];
+  }
   return accountFallback || 'https://example.com';
 }
 
@@ -570,7 +577,7 @@ export async function generateReply(email, account, tenantId = 1) {
   const firstName = extractFirstName(email);
   const personaName = account.display_name || account.persona_name || account.email.split('@')[0];
   const personaTitle = account.persona_title || '';
-  const campaignLink = getRandomCampaignUrl(tenantId, account.campaign_link);
+  const campaignLink = getRandomCampaignUrl(tenantId, account.campaign_link, account.id);
   const trainingExamples = getTrainingExamples(tenantId);
 
   console.log(`[REPLY] T${tenantId} Using campaign URL: ${campaignLink}`);
@@ -621,7 +628,7 @@ export async function generateReply(email, account, tenantId = 1) {
   console.warn(`[REPLY] T${tenantId} All AI failed for ${email.from_email} — using template fallback`);
   logActivity(tenantId, null, 'warning', `AI reply quality failed for ${email.from_email} — used template`,
     `Last rejection: ${validation.reason}`);
-  return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email, tenantId);
+  return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email, tenantId, account.id);
 }
 
 // ─── Build the reply generation prompt ───
@@ -755,11 +762,11 @@ function detectIntent(email) {
   return { intent: bestIntent, score: bestScore, allScores: intents };
 }
 
-// ─── Smart Template Reply (tenant-aware) ───
-function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUnused, email, tenantId = 1) {
+// ─── Smart Template Reply (tenant-aware, account-aware) ───
+function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUnused, email, tenantId = 1, accountId = null) {
   const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
   const signoff = personaTitle ? `${personaName}\n${personaTitle}` : personaName;
-  const link = getRandomCampaignUrl(tenantId, campaignLinkUnused);
+  const link = getRandomCampaignUrl(tenantId, campaignLinkUnused, accountId);
 
   const { intent, score } = detectIntent(email);
   console.log(`[TEMPLATE] T${tenantId} Intent: ${intent} (score ${score}) for ${email.from_email}`);
