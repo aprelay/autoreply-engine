@@ -219,17 +219,23 @@ app.delete('/api/tenants/:id', resolveTenantAuth, requireMaster, (req, res) => {
 
 app.get('/api/stats', resolveTenantAuth, (req, res) => {
   const engine = getEngineStatus();
+  const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
 
-  if (req.isMaster && !req.query.tenant) {
-    // Master sees global stats
+  if (req.isMaster && !req.query.tenant && !accountId) {
+    // Master sees global stats (no account filter)
     const stats = globalStmts.getMasterStats.get();
     res.json({ ...stats, engine_running: engine.running, engine_processing: engine.processing, is_master: true });
   } else {
-    // Tenant-scoped stats
+    // Tenant-scoped stats (optionally filtered by account)
     const ts = getTenantStmts(req.tenantId);
     const tid = req.tenantId;
-    const stats = ts.getStats.get(tid, tid, tid, tid, tid, tid, tid, tid, tid);
-    res.json({ ...stats, engine_running: engine.running, engine_processing: engine.processing, is_master: false, tenant_name: req.tenant.name });
+    let stats;
+    if (accountId) {
+      stats = ts.getStatsByAccount.get(tid, accountId, tid, accountId, tid, accountId, tid, accountId, tid, accountId, tid, accountId, tid, accountId, tid, accountId);
+    } else {
+      stats = ts.getStats.get(tid, tid, tid, tid, tid, tid, tid, tid, tid);
+    }
+    res.json({ ...stats, engine_running: engine.running, engine_processing: engine.processing, is_master: req.isMaster && !accountId, tenant_name: req.tenant.name });
   }
 });
 
@@ -366,10 +372,13 @@ app.get('/api/emails/:id', resolveTenantAuth, (req, res) => {
   res.json(email);
 });
 
-// Approval queue (tenant-scoped)
+// Approval queue (tenant-scoped, optionally filtered by account)
 app.get('/api/approval-queue', resolveTenantAuth, (req, res) => {
   const ts = getTenantStmts(req.tenantId);
-  const queue = ts.getApprovalQueue.all(req.tenantId);
+  const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
+  const queue = accountId
+    ? ts.getApprovalQueueByAccount.all(req.tenantId, accountId)
+    : ts.getApprovalQueue.all(req.tenantId);
   res.json(queue);
 });
 
@@ -575,7 +584,11 @@ app.post('/api/engine/poll/:accountId', resolveTenantAuth, async (req, res) => {
 app.get('/api/activity', resolveTenantAuth, (req, res) => {
   const limit = parseInt(req.query.limit) || 200;
   const ts = getTenantStmts(req.tenantId);
-  res.json(ts.getActivity.all(req.tenantId, limit));
+  const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
+  const activity = accountId
+    ? ts.getActivityByAccount.all(req.tenantId, accountId, limit)
+    : ts.getActivity.all(req.tenantId, limit);
+  res.json(activity);
 });
 
 // ═══════════════════════════════════════════

@@ -351,6 +351,7 @@ function getTenantStmts(tenantId) {
     getEmail: db.prepare('SELECT * FROM emails WHERE id = ? AND tenant_id = ?'),
     getEmailByMessageId: db.prepare('SELECT * FROM emails WHERE message_id = ? AND account_id = ?'),
     getApprovalQueue: db.prepare("SELECT e.*, a.email as account_email, a.persona_name, a.campaign_link FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.tenant_id = ? AND e.reply_status = 'draft' AND a.mode = 'approval' ORDER BY e.created_at DESC"),
+    getApprovalQueueByAccount: db.prepare("SELECT e.*, a.email as account_email, a.persona_name, a.campaign_link FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.tenant_id = ? AND e.account_id = ? AND e.reply_status = 'draft' AND a.mode = 'approval' ORDER BY e.created_at DESC"),
     getPendingEmails: db.prepare("SELECT * FROM emails WHERE tenant_id = ? AND classification = 'pending' ORDER BY id ASC"),
 
     // Training messages
@@ -363,6 +364,7 @@ function getTenantStmts(tenantId) {
 
     // Activity
     getActivity: db.prepare('SELECT * FROM activity_log WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?'),
+    getActivityByAccount: db.prepare('SELECT * FROM activity_log WHERE tenant_id = ? AND account_id = ? ORDER BY created_at DESC LIMIT ?'),
     insertActivity: db.prepare('INSERT INTO activity_log (tenant_id, account_id, type, message, detail) VALUES (?, ?, ?, ?, ?)'),
 
     // Settings (tenant-scoped key-value)
@@ -382,6 +384,18 @@ function getTenantStmts(tenantId) {
         (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND reply_status='failed') as failed,
         (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND classification='auto_reply') as auto_replies_detected,
         (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND created_at >= datetime('now', '-24 hours')) as last_24h
+    `),
+    getStatsByAccount: db.prepare(`
+      SELECT
+        1 as active_accounts,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=?) as total_emails,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND classification='real_reply') as real_replies,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND reply_status='sent') as sent_replies,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND reply_status='draft') as pending_approval,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND reply_status='scheduled') as scheduled,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND reply_status='failed') as failed,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND classification='auto_reply') as auto_replies_detected,
+        (SELECT COUNT(*) FROM emails WHERE tenant_id=? AND account_id=? AND created_at >= datetime('now', '-24 hours')) as last_24h
     `),
   };
 }

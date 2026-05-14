@@ -197,6 +197,13 @@
       <div class="topbar">
         <div class="topbar-title" id="topbarTitle">Overview</div>
         <div style="display:flex;gap:8px;align-items:center">
+          <!-- Global Account Switcher -->
+          <div id="globalAccountSwitcher" style="display:none;align-items:center;gap:6px">
+            <span style="font-size:11px;color:var(--text3);white-space:nowrap"><i class="fas fa-filter"></i></span>
+            <select class="form-select" style="width:auto;min-width:220px;padding:5px 10px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text)" id="globalAccountSelect" onchange="switchAccount()">
+              <option value="">All Accounts</option>
+            </select>
+          </div>
           <span id="masterEngineControls" style="display:none">
             <button class="btn btn-success btn-sm" id="btnStartEngine" onclick="toggleEngine()"><i class="fas fa-play"></i> Start Engine</button>
           </span>
@@ -233,7 +240,7 @@
         <!-- ALL EMAILS -->
         <div class="panel" id="panel-emails">
           <div class="toolbar">
-            <select class="form-select" style="width:auto;min-width:200px" id="emailFilterAccount" onchange="loadEmails()">
+            <select class="form-select" style="width:auto;min-width:200px" id="emailFilterAccount" onchange="syncEmailFilterToGlobal()">
               <option value="">All accounts</option>
             </select>
             <button class="btn btn-secondary btn-sm" onclick="loadEmails()"><i class="fas fa-sync"></i> Refresh</button>
@@ -615,6 +622,7 @@
     let editingTenantId = null;
     let lastEmailCount = 0;
     let autoSyncInterval = null;
+    let selectedAccountId = ''; // Global account filter — filters ALL panels
 
     function API(path) {
       let url = `/api${path}`;
@@ -664,10 +672,11 @@
           await loadTenantSwitcher();
         }
 
+        // Load accounts first (populates global switcher), then everything else
+        await loadAccounts();
         await loadStats();
         await loadActivity();
         await loadApprovalQueue();
-        await loadAccounts();
         checkEngineStatus();
         autoSyncInterval = setInterval(autoSync, 12000);
       } catch (e) {
@@ -707,6 +716,50 @@
       init();
     }
 
+    // ─── Global Account Switcher ───
+    function switchAccount() {
+      selectedAccountId = document.getElementById('globalAccountSelect').value;
+      // Sync the email panel's per-panel filter dropdown to match
+      const emailFilter = document.getElementById('emailFilterAccount');
+      if (emailFilter) emailFilter.value = selectedAccountId;
+      // Reload all visible data with the new account filter
+      loadStats();
+      loadApprovalQueue();
+      loadActivity();
+      loadEmails();
+      // Update topbar title to show which account is active
+      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
+      let title = titles[currentPanel] || currentPanel;
+      if (selectedAccountId) {
+        const acct = accountsCache.find(a => String(a.id) === String(selectedAccountId));
+        if (acct) title += ` — ${acct.email}`;
+      }
+      document.getElementById('topbarTitle').textContent = title;
+    }
+
+    // When user changes the per-panel email filter dropdown, sync it back to global
+    function syncEmailFilterToGlobal() {
+      const val = document.getElementById('emailFilterAccount').value;
+      selectedAccountId = val;
+      document.getElementById('globalAccountSelect').value = val;
+      // Reload all panels with the new filter
+      loadStats();
+      loadApprovalQueue();
+      loadActivity();
+      loadEmails();
+    }
+
+    function populateGlobalAccountSwitcher() {
+      const sel = document.getElementById('globalAccountSelect');
+      sel.innerHTML = '<option value="">All Accounts</option>' +
+        accountsCache.map(a => `<option value="${a.id}" ${String(a.id) === String(selectedAccountId) ? 'selected' : ''}>${esc(a.email)}</option>`).join('');
+    }
+
+    // Helper: build account_id query param for API calls
+    function accountFilterParam() {
+      return selectedAccountId ? `&account_id=${selectedAccountId}` : '';
+    }
+
     // ─── Auto-Sync ───
     async function autoSync() {
       try {
@@ -735,7 +788,12 @@
       const nav = document.querySelector(`.nav-item[data-panel="${name}"]`);
       if (nav) nav.classList.add('active');
       const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
-      document.getElementById('topbarTitle').textContent = titles[name] || name;
+      let title = titles[name] || name;
+      if (selectedAccountId) {
+        const acct = accountsCache.find(a => String(a.id) === String(selectedAccountId));
+        if (acct) title += ` — ${acct.email}`;
+      }
+      document.getElementById('topbarTitle').textContent = title;
       if (name === 'emails') loadEmails();
       if (name === 'approval') loadApprovalQueue();
       if (name === 'accounts') loadAccounts();
@@ -748,7 +806,7 @@
     // ─── Stats ───
     async function loadStats() {
       try {
-        const r = await fetch(API('/stats')).then(r => r.json());
+        const r = await fetch(API('/stats' + (selectedAccountId ? `?account_id=${selectedAccountId}` : ''))).then(r => r.json());
         const isMasterView = r.is_master;
         let statsHtml = '';
         if (isMasterView) {
@@ -974,8 +1032,17 @@
       try {
         const accounts = await fetch(API('/accounts')).then(r => r.json());
         accountsCache = accounts;
+        // Populate per-panel email filter dropdown
         const sel = document.getElementById('emailFilterAccount');
         sel.innerHTML = '<option value="">All accounts</option>' + accounts.map(a => `<option value="${a.id}">${esc(a.email)}</option>`).join('');
+        if (selectedAccountId) sel.value = selectedAccountId;
+        // Populate and show global account switcher (only if 2+ accounts)
+        if (accounts.length >= 1) {
+          populateGlobalAccountSwitcher();
+          document.getElementById('globalAccountSwitcher').style.display = 'flex';
+        } else {
+          document.getElementById('globalAccountSwitcher').style.display = 'none';
+        }
         if (!accounts.length) {
           document.getElementById('accountsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-envelope-open"></i></div><h3>No accounts yet</h3><p>Click "Add Account" to connect your first email account</p></div>';
           return;
@@ -1124,7 +1191,7 @@
     // ─── Approval Queue ───
     async function loadApprovalQueue() {
       try {
-        const queue = await fetch(API('/approval-queue')).then(r => r.json());
+        const queue = await fetch(API('/approval-queue' + (selectedAccountId ? `?account_id=${selectedAccountId}` : ''))).then(r => r.json());
         document.getElementById('approvalInfo').textContent = `${queue.length} email(s) awaiting approval`;
         if (!queue.length) {
           document.getElementById('approvalList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>All clear</h3><p>No emails waiting for approval</p></div>';
@@ -1205,7 +1272,8 @@
     // ─── Emails ───
     async function loadEmails() {
       try {
-        const accountId = document.getElementById('emailFilterAccount')?.value || '';
+        // Use global account filter if set, otherwise fall back to per-panel dropdown
+        const accountId = selectedAccountId || document.getElementById('emailFilterAccount')?.value || '';
         const url = accountId ? API(`/emails?account_id=${accountId}&limit=200`) : API('/emails?limit=200');
         const emails = await fetch(url).then(r => r.json());
         document.getElementById('emailInfo').textContent = `${emails.length} email(s)`;
@@ -1278,7 +1346,7 @@
     // ─── Activity ───
     async function loadActivity() {
       try {
-        const log = await fetch(API('/activity?limit=200')).then(r => r.json());
+        const log = await fetch(API('/activity?limit=200' + (selectedAccountId ? `&account_id=${selectedAccountId}` : ''))).then(r => r.json());
         if (currentPanel === 'overview') {
           document.getElementById('recentActivity').innerHTML = log.slice(0,15).map(formatActivityEntry).join('') || '<div class="empty-state"><p>No activity yet</p></div>';
         }
