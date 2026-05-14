@@ -671,7 +671,7 @@ RULES:
 4. Sound like a real person — not a template, not robotic
 5. Acknowledge what they said specifically (show you read their email)
 6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
-7. Sign off with exactly "${personaName}"${personaTitle ? ` and "${personaTitle}"` : ''} — never write "[Your Title]" or any bracket placeholder
+7. Sign off with EXACTLY "${personaName}"${personaTitle ? ` on the next line "${personaTitle}"` : ' — do NOT add any job title, company name, or position. Just the name, nothing else after it'}. Never write "[Your Title]" or any bracket placeholder. Never invent a title or company.
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
 9. Do NOT use exclamation marks excessively
 10. Do NOT say "I hope this email finds you well" or similar cliches
