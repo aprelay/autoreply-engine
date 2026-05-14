@@ -522,27 +522,141 @@ function getTrainingExamples() {
   }
 }
 
+// ─── Extract the real first name from an email ───
+// Priority: from_name header → body "My name is X" → body signature block → email local part
+function extractFirstName(email) {
+  const fromName = (email.from_name || '').trim();
+  const fromEmail = (email.from_email || '').toLowerCase();
+  const bodyText = (email.body_text || '');
+
+  // Common first names validation — must look like a real name
+  const isRealName = (s) => /^[A-Z][a-z]{1,15}$/.test(s);
+
+  // Patterns that indicate the from_name is NOT a real person
+  const companyIndicators = [
+    /^(info|support|sales|admin|contact|hello|help|team|inquiry|service|billing|hr)\b/i,
+    /\b(inc|llc|ltd|corp|co\.|company|group|center|centre|wholesale|information)\b/i,
+    /^[A-Z]{2,6}\s/,  // "SCCC Info", "RAS WHOLESALE", "DEMERS Bill"
+    /^\w+\s+(info|information|support|inquiry|enquiry|team)$/i,
+    /^[A-Z]+$/,       // All caps single word
+  ];
+
+  // Exclusion set — our own names, titles, and common non-person words
+  // Must be defined BEFORE all steps so every extraction path uses it
+  const badNames = new Set([
+    // Our actual names (body often quotes our outreach at the bottom)
+    'jonathon', 'jonathan', 'keith', 'doyle', 'tetreault', 'special', 'acme',
+    // Common non-name words that appear in email headers/bodies/form fields
+    'team', 'info', 'part', 'name', 'company', 'email', 'phone', 'general',
+    'hello', 'dear', 'good', 'thank', 'thanks', 'please', 'here', 'this',
+    'your', 'best', 'kind', 'warm', 'from', 'sent', 'subject', 'date',
+    'dedicated', 'flatbed', 'drayage', 'warehousing', 'looking', 'forward',
+    'first', 'last', 'message', 'number', 'address', 'resource', 'disclaimer',
+    'confidential', 'intended', 'following', 'received', 'details', 'inquiry',
+    'regards', 'sincerely', 'cheers', 'respectfully', 'sault', 'community',
+    'support', 'sales', 'admin', 'contact', 'service', 'billing', 'office',
+  ]);
+
+  const isGoodName = (s) => isRealName(s) && !badNames.has(s.toLowerCase());
+
+  // Step 1: Try from_name header
+  if (fromName) {
+    const looksLikeCompany = companyIndicators.some(p => p.test(fromName));
+
+    if (!looksLikeCompany) {
+      // "McGinnis, Liddy (Tax, Audit...)" → Liddy
+      if (fromName.includes(',') && /^[A-Z][a-z]+,/.test(fromName)) {
+        const afterComma = fromName.split(',')[1]?.trim() || '';
+        const candidate = afterComma.split(/[\s(]/)[0].replace(/[,.:;]+$/, '');
+        if (isGoodName(candidate)) return candidate;
+      }
+      // Normal "FirstName LastName" → FirstName
+      const firstWord = fromName.split(/\s+/)[0].replace(/[,.:;]+$/, '');
+      if (isGoodName(firstWord)) return firstWord;
+    }
+
+    // "DEMERS Bill" — ALL CAPS first word, try second word
+    if (/^[A-Z]{2,}/.test(fromName)) {
+      const words = fromName.split(/\s+/);
+      for (const w of words) {
+        const clean = w.replace(/[,.:;]+$/, '');
+        if (isGoodName(clean)) return clean;
+      }
+    }
+  }
+
+  // Detect where our own quoted message begins (stop scanning there)
+  const allBodyLines = bodyText.split('\n').map(l => l.trim());
+  let ourQuoteBoundary = allBodyLines.length; // default: scan everything
+  for (let i = 0; i < allBodyLines.length; i++) {
+    const line = allBodyLines[i].toLowerCase();
+    // Our own signature or quoted original message markers
+    if (line.includes('acme construction') || line.includes('special accounts rep') ||
+        line.includes('jonathon doyle') || line.includes('keith tetreault') ||
+        (line.includes('we\'ve reviewed your website') && line.includes('interested in your services'))) {
+      ourQuoteBoundary = i;
+      break;
+    }
+  }
+
+  // Only scan body ABOVE the quoted boundary
+  const senderBodyLines = allBodyLines.slice(0, ourQuoteBoundary).filter(l => l.length > 0);
+
+  // Step 2: Try "My name is X" pattern in sender's portion of body
+  const senderBody = senderBodyLines.join('\n');
+  const nameIntro = senderBody.match(/(?:my name is|this is|i'm|i am)\s+([A-Z][a-z]+)/i);
+  if (nameIntro && isGoodName(nameIntro[1])) {
+    return nameIntro[1];
+  }
+
+  // Step 3: Look for signature name after sign-off keywords
+  for (let i = 0; i < senderBodyLines.length; i++) {
+    if (/^(thanks|thank you|best|regards|cheers|sincerely|warm regards|kind regards),?\s*$/i.test(senderBodyLines[i])) {
+      for (let j = i + 1; j < Math.min(i + 3, senderBodyLines.length); j++) {
+        const candidate = senderBodyLines[j].split(/\s+/)[0].replace(/[,.:;]+$/, '');
+        if (isGoodName(candidate)) return candidate;
+      }
+    }
+  }
+
+  // Step 3b: Look for "Name | Title" or standalone name patterns in sender's body
+  for (let i = 0; i < senderBodyLines.length; i++) {
+    const line = senderBodyLines[i];
+    // "FirstName LastName   |   Title" pattern (e.g. "Alicyn Faller   |   Customer Service")
+    const pipeMatch = line.match(/^([A-Z][a-z]+)\s+[A-Z][a-z]+\s+\|/);
+    if (pipeMatch && isGoodName(pipeMatch[1])) {
+      return pipeMatch[1];
+    }
+    // Standalone "FirstName LastName" on its own line
+    const standaloneMatch = line.match(/^([A-Z][a-z]+)\s+(?:[A-Z]\.?\s+)?[A-Z][a-z]+(?:,\s*(?:Jr|Sr|III|II)\.?)?$/);
+    if (standaloneMatch && isGoodName(standaloneMatch[1])) {
+      return standaloneMatch[1];
+    }
+  }
+
+  // Step 4: Extract from email address (firstname.lastname@ → Firstname)
+  // Skip common non-name words: info, admin, support, inquiry, team, etc.
+  const nonNameWords = new Set([
+    'info', 'admin', 'support', 'sales', 'contact', 'hello', 'help', 'team',
+    'inquiry', 'service', 'billing', 'hr', 'office', 'mail', 'noreply',
+    'webmaster', 'postmaster', 'general', 'media', 'press', 'marketing',
+    'careers', 'jobs', 'events', 'news', 'feedback', 'subscribe',
+  ]);
+  const localPart = fromEmail.split('@')[0];
+  const emailParts = localPart.replace(/[._-]/g, ' ').split(' ');
+  for (const part of emailParts) {
+    if (part.length >= 2 && !nonNameWords.has(part.toLowerCase())) {
+      const capitalized = part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+      if (isGoodName(capitalized)) return capitalized;
+    }
+  }
+
+  return ''; // give up — caller uses "Hi there,"
+}
+
 // ─── Generate Reply (with quality validation + retry + fallback) ───
 export async function generateReply(email, account) {
-  // Extract first name from sender (handles "LastName, FirstName (Title)" format)
-  let firstName = '';
-  if (email.from_name) {
-    const name = email.from_name.trim();
-    if (name.includes(',')) {
-      // "McGinnis, Liddy (Tax, Audit...)" → extract part after first comma, before any parenthesis
-      const afterComma = name.split(',')[1]?.trim() || '';
-      firstName = afterComma.split(/[\s(]/)[0]; // "Liddy" from "Liddy (Tax, Audit...)"
-    }
-    if (!firstName) {
-      firstName = name.split(/\s+/)[0]; // Normal "FirstName LastName" format
-    }
-    // Clean up any trailing punctuation
-    firstName = firstName.replace(/[,.:;]+$/, '');
-  }
-  if (!firstName) {
-    firstName = email.from_email.split('@')[0].replace(/[._-]/g, ' ').split(' ')[0];
-    firstName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
-  }
+  const firstName = extractFirstName(email);
 
   // Use display_name (real mailbox owner) for sign-off, NOT persona_name
   // This matches the From header in sendReply() which also uses display_name
@@ -640,22 +754,298 @@ RULES:
 Write ONLY the reply text, nothing else:`;
 }
 
-// ─── Template fallback reply ───
+// ─── Intent Detection — figures out WHAT the person is asking ───
+function detectIntent(email) {
+  const body = (email.body_text || '').toLowerCase().substring(0, 3000);
+  const subject = (email.subject || '').toLowerCase();
+  const combined = subject + ' ' + body;
+
+  // Score each intent — highest wins
+  const intents = {
+    asking_what_services: 0,
+    wants_to_schedule_call: 0,
+    asking_project_details: 0,
+    requesting_info_form: 0,
+    sent_pricing_or_info: 0,
+    phone_didnt_work: 0,
+    general_interest: 0,
+  };
+
+  // ── "What services do you need?" ──
+  const servicePatterns = [
+    'what type of services', 'what services', 'which services',
+    'what are you looking for', 'what are you seeking',
+    'what do you need', 'what you need', 'what you are looking',
+    'could you please share', 'share a few more details',
+    'more details about the services', 'be very specific about what',
+    'what kind of', 'employment or settlement',
+    'ftl', 'ltl', 'flatbed', 'truckload', 'drayage',
+    'nature of your project', 'send more details',
+    'what were you hoping', 'how you would hope to use',
+    'what you\'re looking to do', 'what you are currently seeking',
+    'how we can best help', 'how can we help',
+  ];
+  for (const p of servicePatterns) { if (combined.includes(p)) intents.asking_what_services += 25; }
+
+  // ── "Let's schedule a call / connect" ──
+  const callPatterns = [
+    'schedule a time', 'schedule a call', 'set up a time',
+    'moment to connect', 'have a moment', 'time to chat',
+    'when could be good', 'when works for you',
+    'would you have some time', 'talk for about',
+    'happy to have a discussion', 'use my scheduler',
+    'look forward to meeting', 'coordinate a meeting',
+    'can we schedule', 'let\'s set up', 'quick call',
+    'did you have a moment',
+  ];
+  for (const p of callPatterns) { if (combined.includes(p)) intents.wants_to_schedule_call += 25; }
+
+  // ── "Tell me about your project" ──
+  const projectPatterns = [
+    'what project you are working on', 'tell me a bit more',
+    'can you tell me', 'more about what you',
+    'about your project', 'project details',
+    'a bit more about', 'more information about',
+    'can you advise', 'where the project is located',
+    'where is the project', 'scope of work',
+    'what are you looking to do',
+  ];
+  for (const p of projectPatterns) { if (combined.includes(p)) intents.asking_project_details += 25; }
+
+  // ── "Fill out this form / provide info" ──
+  const formPatterns = [
+    'please provide the following', 'following information',
+    'company name:', 'company website:', 'your title:',
+    'product', 'interest:', 'volume:', 'shipping address',
+    'complete the application', 'fill out', 'click on the',
+    'apply now', 'start your quote',
+    'please provide', 'need some information before',
+  ];
+  for (const p of formPatterns) { if (combined.includes(p)) intents.requesting_info_form += 25; }
+
+  // ── "Here's the pricing / info you asked for" ──
+  const pricingPatterns = [
+    'pricing you requested', 'here is the pricing',
+    'pricing information', 'here are the rates',
+    'attached', 'quote for you', 'work up a quote',
+    'our platform is designed', 'unfortunately',
+    'not a good fit', 'doesn\'t align',
+    'here is what you asked', 'as requested',
+  ];
+  for (const p of pricingPatterns) { if (combined.includes(p)) intents.sent_pricing_or_info += 25; }
+
+  // ── "We tried calling but phone didn't work" ──
+  const phonePatterns = [
+    'tried calling', 'tried to contact',
+    'attempted to contact', 'out of service',
+    'number provided', 'not in service',
+    'left a voicemail', 'confirm the best phone',
+    'phone number', 'couldn\'t reach',
+  ];
+  for (const p of phonePatterns) { if (combined.includes(p)) intents.phone_didnt_work += 25; }
+
+  // ── General interest (weakest — fallback) ──
+  const generalPatterns = [
+    'thank you for reaching out', 'thanks for reaching out',
+    'thank you for your interest', 'appreciate your interest',
+    'happy to help', 'happy to assist', 'more than happy',
+    'received your inquiry', 'saw your information request',
+    'notified that you filled',
+  ];
+  for (const p of generalPatterns) { if (combined.includes(p)) intents.general_interest += 10; }
+
+  // Find the highest-scoring intent
+  let bestIntent = 'general_interest';
+  let bestScore = 0;
+  for (const [intent, score] of Object.entries(intents)) {
+    if (score > bestScore) { bestScore = score; bestIntent = intent; }
+  }
+
+  return { intent: bestIntent, score: bestScore, allScores: intents };
+}
+
+// ─── Smart Template Reply — reads the email and responds contextually ───
 function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUnused, email) {
   const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
   const signoff = personaTitle ? `${personaName}\n${personaTitle}` : personaName;
-  // Use random campaign URL rotation instead of account-level link
   const link = getRandomCampaignUrl(campaignLinkUnused);
+
+  const { intent, score } = detectIntent(email);
+  console.log(`[TEMPLATE] Intent: ${intent} (score ${score}) for ${email.from_email}`);
+
+  // ── Variation pool: pick random phrasing so consecutive replies aren't identical ──
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  // ── Contextual reply body based on detected intent ──
+  let body = '';
+
+  switch (intent) {
+
+    case 'asking_what_services':
+      // They asked what we need — answer with construction/estimating context
+      body = pick([
+        `Thanks for getting back to me on this.
+
+We're primarily looking for support on the estimating and pre-construction side. We handle a good mix of commercial projects — anything from ground-up to renovations — and we're looking to streamline how we manage bids and subcontractor coordination.
+
+I put together a brief overview of our current workflow and what we're looking for here: ${link}
+
+${pick(['Let me know if that gives you enough to go on.', 'Happy to jump on a quick call if easier to walk through it.', 'Take a look and let me know your thoughts.'])}`,
+
+        `Appreciate you following up.
+
+On our end, we're focused on commercial construction — estimating, takeoffs, and bid management. We've been handling most of it manually and are looking at options to tighten up the process.
+
+I outlined the scope and a few specifics here: ${link}
+
+${pick(['Would be happy to discuss further if that helps.', 'Let me know if you need anything else from my side.', 'Feel free to reach out with any questions.'])}`,
+
+        `Thanks for asking — happy to clarify.
+
+We do a range of commercial and industrial projects and right now we're looking at improving our estimating workflow. The volume has picked up and we need a more reliable system for tracking bids, quantities, and sub coordination.
+
+Here's a quick rundown of what we're working with: ${link}
+
+${pick(['Curious to hear how you might be able to help with that.', 'Let me know if that lines up with what you handle.', 'Looking forward to your thoughts on it.'])}`,
+      ]);
+      break;
+
+    case 'wants_to_schedule_call':
+      // They want to schedule — be flexible and give options
+      body = pick([
+        `Thanks for following up — I'd be happy to connect.
+
+I'm generally open ${pick(['later this week', 'most afternoons this week', 'Thursday or Friday'])}. ${pick(['Mornings tend to work best for me but I can be flexible.', 'Anytime after 10 AM works well on my end.', 'I can make most time slots work.'])}
+
+In the meantime, here's a quick overview of what we're working on so we can hit the ground running: ${link}
+
+Let me know what works on your end.`,
+
+        `Absolutely — a call sounds great.
+
+I'm available ${pick(['most of this week', 'tomorrow afternoon or Thursday', 'pretty much any day this week'])}. ${pick(['A 15-20 minute window should be plenty.', 'Even a quick 15 minutes would work.', 'Happy to keep it brief or go deeper depending on what makes sense.'])}
+
+I put together some notes on our project scope here if you want to take a look beforehand: ${link}
+
+${pick(['Just send over a time that works.', 'Looking forward to it.', 'Shoot me a couple times and we will make it work.'])}`,
+
+        `That works for me — let's get something on the calendar.
+
+I should be free ${pick(['later this week', 'Wednesday or Thursday', 'most afternoons'])}. Feel free to grab a slot or just let me know what works: ${link}
+
+${pick(['Talk soon.', 'Looking forward to connecting.', 'Appreciate the quick response.'])}`,
+      ]);
+      break;
+
+    case 'asking_project_details':
+      // They want to know more about the project
+      body = pick([
+        `Good question — let me give you some context.
+
+We're a construction supply company handling commercial projects, and we're looking to improve how we manage the estimating and bidding side of things. Right now a lot of it is manual and we're exploring tools and partners that can help us scale that up.
+
+I put together a quick summary here: ${link}
+
+${pick(['Happy to walk through the details on a call if that would help.', 'Let me know if you want to dig into any of that further.', 'Take a look and let me know what questions you have.'])}`,
+
+        `Sure thing — happy to share more.
+
+We specialize in commercial construction supply and our main focus right now is tightening up the pre-construction and estimating process. We've been growing and the current setup doesn't scale well.
+
+Here's an overview of what we have in mind: ${link}
+
+${pick(['Would love to hear your take on it.', 'Curious if this falls in your wheelhouse.', 'Let me know if there is a good time to discuss.'])}`,
+
+        `Of course — I should have included more detail in my initial note.
+
+We're on the commercial construction side — estimating, takeoffs, bid management. We're looking at solutions that can help us handle higher volume without adding headcount.
+
+I documented the key requirements here: ${link}
+
+${pick(['Let me know how this aligns with what you offer.', 'Happy to discuss further whenever works for you.', 'Would be great to get your input on approach.'])}`,
+      ]);
+      break;
+
+    case 'requesting_info_form':
+      // They sent a form/questionnaire to fill out
+      body = pick([
+        `Thanks for sending that over.
+
+I'll get the information pulled together and sent back to you. In the meantime, here's a quick overview of our company and what we're working on that might help fill in some of the blanks: ${link}
+
+${pick(['I should have everything back to you shortly.', 'Will follow up with the details soon.', 'I will get that over to you as soon as I can.'])}`,
+
+        `Appreciate you outlining what you need.
+
+I'll work on getting those details together for you. To give you a head start, here's some background on our company and the project scope: ${link}
+
+${pick(['I will circle back with the rest soon.', 'Let me know if there is anything else you need in the meantime.', 'Should have it over to you within a day or two.'])}`,
+      ]);
+      break;
+
+    case 'sent_pricing_or_info':
+      // They sent pricing or specific info back
+      body = pick([
+        `Thanks for sending that over — I'll take a look and get back to you.
+
+I've also put together a summary of our requirements and timeline here in case it helps with next steps: ${link}
+
+${pick(['Will follow up once I have had a chance to review.', 'Appreciate the quick turnaround on this.', 'I will be in touch shortly.'])}`,
+
+        `Got it, thanks. I'll review everything and circle back.
+
+If it helps to have more context on our side, here's a breakdown of what we're working with: ${link}
+
+${pick(['Talk soon.', 'Appreciate the info.', 'Let me know if you need anything else from us in the meantime.'])}`,
+      ]);
+      break;
+
+    case 'phone_didnt_work':
+      // They tried calling and it didn't work
+      body = pick([
+        `Apologies about that — the best way to reach me is by email for now. I'm usually quicker to respond here.
+
+If it helps, I put together an overview of what we're looking for so we can keep things moving: ${link}
+
+${pick(['Happy to jump on a call at a scheduled time if needed.', 'Feel free to suggest a time and I can make sure I am available.', 'Let me know what works best for you going forward.'])}`,
+
+        `Sorry about the phone issue — email is the most reliable way to get me right now.
+
+To keep things on track, here's a rundown of our project and what we need: ${link}
+
+${pick(['We can set up a call whenever convenient — just send me a couple options.', 'Let me know if a call would still be helpful and I will make it work.', 'Happy to continue over email or schedule something at a specific time.'])}`,
+      ]);
+      break;
+
+    default:
+      // General interest / couldn't determine specific intent
+      body = pick([
+        `Thanks for getting back to me on this — I appreciate it.
+
+We're in the commercial construction space and are currently looking at ways to improve our estimating and bid management workflow. I've outlined the key details here: ${link}
+
+${pick(['Would love to hear your thoughts when you get a chance.', 'Let me know if there is a good time to connect.', 'Happy to discuss further.'])}`,
+
+        `Appreciate the response.
+
+I wanted to give you a bit more context on what we're working on. We handle commercial construction projects and we're looking to tighten up the pre-construction side of things.
+
+Here's a summary of what we have in mind: ${link}
+
+${pick(['Let me know if this is something you can help with.', 'Would be great to get your take on it.', 'Happy to jump on a call if that is easier.'])}`,
+
+        `Thanks for circling back.
+
+On our end, we're focused on construction estimating and looking at streamlining how we handle bids and takeoffs. Figured it would be easier to share the details in one place: ${link}
+
+${pick(['Let me know your thoughts.', 'Looking forward to hearing from you.', 'Feel free to reach out with any questions.'])}`,
+      ]);
+      break;
+  }
 
   return `${greeting}
 
-Thank you for getting back to us!
-
-I'd love to schedule a call to discuss our project in more detail. Please find our requirements document and availability calendar at the link below:
-
-${link}
-
-Let us know what time works best for you, and we'll make it happen.
+${body}
 
 BR,
 ${signoff}`;
