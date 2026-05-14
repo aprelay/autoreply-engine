@@ -173,7 +173,7 @@ export async function fetchNewEmails(account) {
   return newEmails;
 }
 
-// ─── SMTP: Send reply ───
+// ─── SMTP: Send reply + IMAP APPEND to Sent folder ───
 export async function sendReply(account, email, replyText) {
   const transporter = nodemailer.createTransport({
     host: account.smtp_host,
@@ -209,12 +209,22 @@ export async function sendReply(account, email, replyText) {
   try {
     const info = await transporter.sendMail(mailOptions);
     console.log(`[SMTP] Reply sent to ${email.from_email} — MessageId: ${info.messageId}`);
+
+    // ─── IMAP APPEND: Save sent message to Sent folder ───
+    // Most SMTP servers don't auto-save to Sent, so we manually append via IMAP
+    try {
+      await appendToSentFolder(account, mailOptions, replyText);
+      console.log(`[IMAP] Saved reply to Sent folder for ${account.email}`);
+    } catch (appendErr) {
+      // Non-fatal — email was sent, just didn't save to Sent folder
+      console.warn(`[IMAP] Failed to save to Sent folder: ${appendErr.message}`);
+    }
     
     stmts.markEmailSent.run(email.id);
     stmts.incrementReplied.run(account.id);
     logActivity(account.id, 'reply_sent', 
       `Reply sent to ${email.from_email}`, 
-      `Subject: ${subject} | Reply: ${replyText.substring(0, 200)}...`);
+      `Subject: ${subject} | MessageId: ${info.messageId}`);
     
     return { success: true, messageId: info.messageId };
   } catch (error) {
@@ -222,6 +232,90 @@ export async function sendReply(account, email, replyText) {
     stmts.markEmailFailed.run(error.message, email.id);
     logActivity(account.id, 'error', `Reply failed to ${email.from_email}: ${error.message}`);
     return { success: false, error: error.message };
+  }
+}
+
+// ─── IMAP APPEND: Copy sent message to Sent folder ───
+async function appendToSentFolder(account, mailOptions, replyText) {
+  // Build the raw RFC 822 message to append
+  const fromLine = mailOptions.from.name
+    ? `"${mailOptions.from.name}" <${mailOptions.from.address}>`
+    : mailOptions.from.address;
+  const dateLine = new Date().toUTCString();
+  const messageId = `<sent-${Date.now()}-${Math.random().toString(36).substring(2, 8)}@${mailOptions.from.address.split('@')[1]}>`;
+
+  let rawMessage = '';
+  rawMessage += `From: ${fromLine}\r\n`;
+  rawMessage += `To: ${mailOptions.to}\r\n`;
+  rawMessage += `Subject: ${mailOptions.subject}\r\n`;
+  rawMessage += `Date: ${dateLine}\r\n`;
+  rawMessage += `Message-ID: ${messageId}\r\n`;
+  rawMessage += `MIME-Version: 1.0\r\n`;
+  rawMessage += `Content-Type: text/plain; charset=utf-8\r\n`;
+  rawMessage += `Content-Transfer-Encoding: 7bit\r\n`;
+  if (mailOptions.inReplyTo) {
+    rawMessage += `In-Reply-To: ${mailOptions.inReplyTo}\r\n`;
+    rawMessage += `References: ${mailOptions.inReplyTo}\r\n`;
+  }
+  rawMessage += `\r\n`;
+  rawMessage += replyText;
+
+  const client = new ImapFlow({
+    host: account.imap_host,
+    port: account.imap_port,
+    secure: true,
+    auth: {
+      user: account.email,
+      pass: account.password,
+    },
+    logger: false,
+    tls: { rejectUnauthorized: false },
+    greetTimeout: 15000,
+    socketTimeout: 30000,
+  });
+
+  try {
+    await client.connect();
+
+    // Try common Sent folder names — different servers use different names
+    const sentFolderNames = ['Sent', 'INBOX.Sent', 'Sent Messages', 'Sent Items', 'INBOX.Sent Messages'];
+    let sentFolder = null;
+
+    // List mailboxes to find the actual Sent folder
+    const mailboxes = await client.list();
+    for (const box of mailboxes) {
+      const specialUse = box.specialUse || '';
+      if (specialUse === '\\Sent') {
+        sentFolder = box.path;
+        break;
+      }
+    }
+
+    // Fallback: try common names if no \Sent flag found
+    if (!sentFolder) {
+      for (const name of sentFolderNames) {
+        try {
+          await client.status(name, { messages: true });
+          sentFolder = name;
+          break;
+        } catch (e) {
+          // This folder doesn't exist, try next
+        }
+      }
+    }
+
+    if (!sentFolder) {
+      throw new Error('Could not find Sent folder');
+    }
+
+    // Append the message to Sent folder with \Seen flag
+    await client.append(sentFolder, Buffer.from(rawMessage), ['\\Seen'], new Date());
+    console.log(`[IMAP] Message appended to "${sentFolder}"`);
+
+    await client.logout();
+  } catch (error) {
+    try { await client.logout(); } catch(e) {}
+    throw error;
   }
 }
 

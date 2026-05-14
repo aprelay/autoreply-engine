@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // AUTOREPLY ENGINE — Orchestrator (Poll → Classify → Reply)
 // The main loop that ties everything together
-// v1.4: Smart conversation guard — prevents duplicate/looping replies
+// v1.5: Fixed SMTP delivery — column conflict bug + IMAP Sent folder append
 // ═══════════════════════════════════════════════════════════════
 
 import { stmts, logActivity } from './database.js';
@@ -160,10 +160,14 @@ async function sendScheduledReplies() {
 
   for (const row of due) {
     // Build account and email objects from the joined row
+    // IMPORTANT: Use explicit column names — SELECT e.*, a.* causes 'id' column conflict
+    // (a.id overwrites e.id). The query now uses e.id as id explicitly.
     const account = {
       id: row.account_id,
       email: row.email,
       display_name: row.display_name,
+      imap_host: row.imap_host,
+      imap_port: row.imap_port,
       smtp_host: row.smtp_host,
       smtp_port: row.smtp_port,
       password: row.password,
@@ -178,7 +182,7 @@ async function sendScheduledReplies() {
       message_id: row.message_id,
     };
 
-    console.log(`[SEND] Sending reply to ${email.from_email}...`);
+    console.log(`[SEND] Sending reply to ${email.from_email} (email #${email.id})...`);
     await sendReply(account, email, row.reply_text);
   }
 }
