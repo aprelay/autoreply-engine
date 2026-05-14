@@ -353,6 +353,8 @@ function getTenantStmts(tenantId) {
     getApprovalQueue: db.prepare("SELECT e.*, a.email as account_email, a.persona_name, a.campaign_link FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.tenant_id = ? AND e.reply_status = 'draft' AND a.mode = 'approval' ORDER BY e.created_at DESC"),
     getApprovalQueueByAccount: db.prepare("SELECT e.*, a.email as account_email, a.persona_name, a.campaign_link FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.tenant_id = ? AND e.account_id = ? AND e.reply_status = 'draft' AND a.mode = 'approval' ORDER BY e.created_at DESC"),
     getPendingEmails: db.prepare("SELECT * FROM emails WHERE tenant_id = ? AND classification = 'pending' ORDER BY id ASC"),
+    getSkippedEmails: db.prepare("SELECT e.*, a.email as account_email, a.persona_name FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.tenant_id = ? AND e.reply_status = 'skipped' ORDER BY e.created_at DESC LIMIT ?"),
+    getSkippedEmailsByAccount: db.prepare("SELECT e.*, a.email as account_email, a.persona_name FROM emails e JOIN accounts a ON e.account_id = a.id WHERE e.tenant_id = ? AND e.account_id = ? AND e.reply_status = 'skipped' ORDER BY e.created_at DESC LIMIT ?"),
 
     // Training messages
     getTrainingMessages: db.prepare('SELECT * FROM training_messages WHERE tenant_id = ? ORDER BY created_at DESC'),

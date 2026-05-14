@@ -372,6 +372,54 @@ app.get('/api/emails/:id', resolveTenantAuth, (req, res) => {
   res.json(email);
 });
 
+// Skipped emails review (AI-skipped emails for manual review)
+app.get('/api/skipped-emails', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
+  const limit = parseInt(req.query.limit) || 200;
+  const emails = accountId
+    ? ts.getSkippedEmailsByAccount.all(req.tenantId, accountId, limit)
+    : ts.getSkippedEmails.all(req.tenantId, limit);
+  res.json(emails);
+});
+
+// Force-draft a skipped email (override AI classification → generate reply)
+app.post('/api/emails/:id/force-draft', resolveTenantAuth, async (req, res) => {
+  try {
+    const ts = getTenantStmts(req.tenantId);
+    const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
+    if (!email) return res.status(404).json({ error: 'Not found' });
+    const account = ts.getAccount.get(email.account_id, req.tenantId);
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+
+    // Reclassify as real_reply
+    globalStmts.updateEmailClassification.run({
+      id: email.id,
+      classification: 'real_reply',
+      confidence: 1.0,
+      classification_reason: 'Manually overridden — force-drafted by user',
+    });
+
+    // Generate reply
+    console.log(`[FORCE-DRAFT] T${req.tenantId} Generating reply for ${email.from_email}...`);
+    const replyText = await generateReply(email, account, req.tenantId);
+
+    globalStmts.updateEmailReply.run({
+      reply_status: 'draft',
+      reply_text: replyText,
+      reply_scheduled_for: null,
+      id: email.id,
+    });
+
+    logActivity(req.tenantId, account.id, 'draft',
+      `Force-drafted reply for ${email.from_email} (was skipped)`,
+      replyText.substring(0, 200));
+    res.json({ success: true, reply_text: replyText });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Approval queue (tenant-scoped, optionally filtered by account)
 app.get('/api/approval-queue', resolveTenantAuth, (req, res) => {
   const ts = getTenantStmts(req.tenantId);

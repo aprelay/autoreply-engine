@@ -181,7 +181,9 @@ async function sendScheduledReplies() {
 
 // ─── Process pending backlog emails (classify + draft) ───
 // Runs each poll cycle, processes up to BATCH_SIZE pending emails per tenant
-const PENDING_BATCH_SIZE = 25; // emails per tenant per poll cycle — balanced speed vs API rate limits
+const PENDING_BATCH_SIZE = 50; // emails per tenant per poll cycle — increased for faster backlog clearing
+const BACKLOG_SUB_BATCH = 10; // process in sub-batches with small pauses to avoid API rate limits
+const BACKLOG_PAUSE_MS = 500; // pause between sub-batches (ms) — prevents overwhelming AI API
 
 async function processPendingBacklog() {
   const activeTenants = tenantStmts.getActive.all();
@@ -197,8 +199,14 @@ async function processPendingBacklog() {
     
     let processed = 0;
     let realReplies = 0;
+    let subBatchCount = 0;
     
     for (const email of batch) {
+      // Pause between sub-batches to avoid hammering the AI API
+      if (subBatchCount > 0 && subBatchCount % BACKLOG_SUB_BATCH === 0) {
+        await new Promise(r => setTimeout(r, BACKLOG_PAUSE_MS));
+      }
+      subBatchCount++;
       try {
         const result = await classifyEmail(email, tenant.id);
         console.log(`[BACKLOG] T${tenant.id} ${email.from_email}: ${result.classification} (${(result.confidence * 100).toFixed(0)}%)`);

@@ -153,6 +153,9 @@
         <div class="nav-item" data-panel="approval" onclick="switchPanel('approval')">
           <span class="icon"><i class="fas fa-check-circle"></i></span> Approval Queue <span class="badge" id="navApprovalCount" style="display:none">0</span>
         </div>
+        <div class="nav-item" data-panel="skipped" onclick="switchPanel('skipped')">
+          <span class="icon"><i class="fas fa-eye-slash"></i></span> Skipped Review <span class="badge" id="navSkippedCount" style="display:none;background:var(--text3)">0</span>
+        </div>
       </div>
       <div class="nav-section">
         <div class="nav-label">Management</div>
@@ -248,6 +251,21 @@
             <span style="font-size:12px;color:var(--text3)" id="emailInfo"></span>
           </div>
           <div id="emailsList"></div>
+        </div>
+
+        <!-- SKIPPED EMAILS REVIEW -->
+        <div class="panel" id="panel-skipped">
+          <div class="toolbar">
+            <button class="btn btn-secondary btn-sm" onclick="loadSkippedEmails()"><i class="fas fa-sync"></i> Refresh</button>
+            <span style="font-size:12px;color:var(--text3)" id="skippedInfo"></span>
+          </div>
+          <div class="card" style="background:rgba(245,158,11,.05);border-color:rgba(245,158,11,.2);margin-bottom:16px">
+            <div style="font-size:12px;color:var(--text2);line-height:1.6">
+              <i class="fas fa-info-circle" style="color:var(--yellow);margin-right:4px"></i>
+              <strong>AI-Skipped Emails:</strong> These emails were classified by the AI as non-real-replies (auto-replies, newsletters, notifications, etc.) and skipped. If the AI wrongly skipped a real email, click <strong>"Draft Reply"</strong> to override and generate a reply.
+            </div>
+          </div>
+          <div id="skippedList"></div>
         </div>
 
         <!-- ACTIVITY LOG -->
@@ -729,7 +747,7 @@
       loadActivity();
       loadEmails();
       // Update topbar title to show which account is active
-      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
+      const titles = { overview:'Overview', approval:'Approval Queue', skipped:'Skipped Review', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
       let title = titles[currentPanel] || currentPanel;
       if (selectedAccountId) {
         const acct = accountsCache.find(a => String(a.id) === String(selectedAccountId));
@@ -768,6 +786,7 @@
         await loadStats();
         await checkEngineStatus();
         if (currentPanel === 'approval') await loadApprovalQueue();
+        else if (currentPanel === 'skipped') await loadSkippedEmails();
         else if (currentPanel === 'emails') await loadEmails();
         else if (currentPanel === 'activity') await loadActivity();
         else if (currentPanel === 'overview') await loadActivity();
@@ -788,7 +807,7 @@
       if (panel) panel.classList.add('active');
       const nav = document.querySelector(`.nav-item[data-panel="${name}"]`);
       if (nav) nav.classList.add('active');
-      const titles = { overview:'Overview', approval:'Approval Queue', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
+      const titles = { overview:'Overview', approval:'Approval Queue', skipped:'Skipped Review', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
       let title = titles[name] || name;
       if (selectedAccountId) {
         const acct = accountsCache.find(a => String(a.id) === String(selectedAccountId));
@@ -797,6 +816,7 @@
       document.getElementById('topbarTitle').textContent = title;
       if (name === 'emails') loadEmails();
       if (name === 'approval') loadApprovalQueue();
+      if (name === 'skipped') loadSkippedEmails();
       if (name === 'accounts') loadAccounts();
       if (name === 'activity') loadActivity();
       if (name === 'settings') loadSettings();
@@ -1267,6 +1287,65 @@
         const r = await fetch(API('/emails/process-pending'), { method:'POST' }).then(r => r.json());
         if (r.success) { toast(`Processed ${r.processed} email(s), ${r.realReplies} real replies`, 'success'); loadStats(); loadApprovalQueue(); loadEmails(); }
         else toast(r.error || 'Failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    // ─── Skipped Emails Review ───
+    async function loadSkippedEmails() {
+      try {
+        const url = API('/skipped-emails?limit=200' + (selectedAccountId ? `&account_id=${selectedAccountId}` : ''));
+        const emails = await fetch(url).then(r => r.json());
+        document.getElementById('skippedInfo').textContent = `${emails.length} skipped email(s)`;
+        // Update nav badge
+        const badge = document.getElementById('navSkippedCount');
+        if (emails.length > 0) { badge.style.display='inline'; badge.textContent=emails.length; }
+        else { badge.style.display='none'; }
+        if (!emails.length) {
+          document.getElementById('skippedList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>No skipped emails</h3><p>The AI hasn\'t skipped any emails yet, or all skipped emails have been reviewed.</p></div>';
+          return;
+        }
+        const classBadge = (c) => {
+          const map = { auto_reply:'badge-gray', newsletter:'badge-purple', spam:'badge-red', bounce:'badge-red', out_of_office:'badge-yellow', notification:'badge-blue', other:'badge-gray' };
+          return `<span class="badge-pill ${map[c]||'badge-gray'}">${c}</span>`;
+        };
+        document.getElementById('skippedList').innerHTML = emails.map(e => `
+          <div class="email-card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div style="flex:1">
+                <div class="from"><i class="fas fa-user" style="color:var(--text3);margin-right:4px"></i> ${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
+                <div class="subject"><strong>Subject:</strong> ${esc(e.subject)}</div>
+                <div class="meta">
+                  ${classBadge(e.classification)}
+                  <span class="badge-pill badge-gray">skipped</span>
+                  <span>${esc(e.account_email||'')}</span>
+                  <span>${timeAgo(e.created_at)}</span>
+                </div>
+              </div>
+            </div>
+            ${e.classification_reason ? `<div style="font-size:11px;color:var(--text3);margin-top:6px;padding:6px 10px;background:var(--bg2);border-radius:6px"><i class="fas fa-robot" style="margin-right:4px"></i> <strong>AI Reason:</strong> ${esc(e.classification_reason)}</div>` : ''}
+            <div class="body-preview">${esc((e.body_text||'').substring(0,400))}</div>
+            <div class="actions">
+              <button class="btn btn-success btn-sm" onclick="forceDraftReply(${e.id})"><i class="fas fa-pen-to-square"></i> Draft Reply</button>
+              <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><i class="fas fa-eye"></i> View Full</button>
+            </div>
+          </div>
+        `).join('');
+      } catch(e) { console.error('Skipped emails error:', e); }
+    }
+
+    async function forceDraftReply(id) {
+      if (!confirm('Override AI classification and generate a draft reply for this email?')) return;
+      toast('Generating draft reply...', 'info');
+      try {
+        const r = await fetch(API(`/emails/${id}/force-draft`), { method:'POST' }).then(r => r.json());
+        if (r.success) {
+          toast('Draft reply created! Check the Approval Queue.', 'success');
+          loadSkippedEmails();
+          loadApprovalQueue();
+          loadStats();
+        } else {
+          toast(r.error || 'Failed to generate reply', 'error');
+        }
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
