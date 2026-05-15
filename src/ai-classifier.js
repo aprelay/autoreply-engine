@@ -174,6 +174,40 @@ function validateReplyQuality(replyText, recipientFirstName) {
     return { valid: false, reason: 'Missing greeting and signoff — does not look like an email reply' };
   }
 
+  // Detect fragmented/gibberish replies — too many short sentences (1-3 word sentences)
+  const sentences = replyText.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const shortSentences = sentences.filter(s => s.trim().split(/\s+/).length <= 3);
+  if (sentences.length > 3 && shortSentences.length / sentences.length > 0.5) {
+    return { valid: false, reason: `Too many fragmented sentences (${shortSentences.length}/${sentences.length})` };
+  }
+
+  // Detect repeated content — same block appears multiple times
+  const halfLen = Math.floor(replyText.length / 2);
+  if (replyText.length > 150) {
+    const firstThird = replyText.substring(0, Math.floor(replyText.length / 3));
+    if (firstThird.length > 50 && replyText.indexOf(firstThird, firstThird.length) !== -1) {
+      return { valid: false, reason: 'Reply contains duplicated/repeated content' };
+    }
+  }
+
+  // Detect AI reasoning/thinking leaked into reply
+  const aiReasoningPatterns = [
+    /\bis about \d+ sentences/i,
+    /\bis the core\b/i,
+    /\backnowledgment,\s*link,\s*scheduling/i,
+    /\bwarm human-sounding\b/i,
+    /\bGitHub:/i,
+    /\bwith title\b\.?$/im,
+    /^:\s*Hi\b/m,  // Colon before greeting = reasoning artifact
+  ];
+  let reasoningHits = 0;
+  for (const pat of aiReasoningPatterns) {
+    if (pat.test(replyText)) reasoningHits++;
+  }
+  if (reasoningHits >= 1) {
+    return { valid: false, reason: `Contains AI reasoning artifacts (${reasoningHits} hits)` };
+  }
+
   return { valid: true };
 }
 
@@ -611,10 +645,14 @@ export async function generateReply(email, account, tenantId = 1) {
     // Strip DeepSeek/reasoning model "thinking" blocks: <think>...</think>
     text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
+    // Strip leading colons (reasoning artifact: ": Hi Brendan,")
+    text = text.replace(/^:\s*/gm, '').trim();
+
     // Strip AI reasoning preamble — lines that start with "We need to", "Let me", "The context says", etc.
-    // These indicate the model is "thinking out loud" instead of writing the reply
     const reasoningPatterns = [
       /^(?:We need to|Let me|I need to|The (?:context|instruction|recipient|prompt) says|So (?:we|I) (?:must|need|should)|Possibly|That seems like|First,|Now,|OK,|Alright,|Okay,)[^\n]*\n?/gim,
+      // Catch reasoning like "is about 2 sentences...is the core."
+      /^(?:is about|the (?:reply|response|answer)|acknowledgment|warm human)[^\n]*\n?/gim,
     ];
     let cleaned = text;
     for (const pattern of reasoningPatterns) {
@@ -623,6 +661,18 @@ export async function generateReply(email, account, tenantId = 1) {
     // If stripping reasoning removed everything or left <50 chars, keep original
     if (cleaned.length >= 50) {
       text = cleaned;
+    }
+
+    // De-duplicate: if the reply contains repeated blocks, keep only the first occurrence
+    // Detect by checking if the first ~100 chars appear again later
+    if (text.length > 200) {
+      const firstBlock = text.substring(0, Math.min(100, Math.floor(text.length / 3)));
+      const secondOccurrence = text.indexOf(firstBlock, firstBlock.length);
+      if (secondOccurrence !== -1) {
+        // Keep only up to the second occurrence
+        text = text.substring(0, secondOccurrence).trim();
+        console.log(`[REPLY] Stripped duplicated content — kept first ${text.length} chars`);
+      }
     }
 
     return text
