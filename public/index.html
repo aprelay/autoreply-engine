@@ -256,7 +256,7 @@
         <!-- SKIPPED EMAILS REVIEW -->
         <div class="panel" id="panel-skipped">
           <div class="toolbar">
-            <button class="btn btn-secondary btn-sm" onclick="loadSkippedEmails()"><i class="fas fa-sync"></i> Refresh</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadSkippedEmails(true)"><i class="fas fa-sync"></i> Refresh</button>
             <span style="font-size:12px;color:var(--text3)" id="skippedInfo"></span>
           </div>
           <div class="card" style="background:rgba(245,158,11,.05);border-color:rgba(245,158,11,.2);margin-bottom:16px">
@@ -790,7 +790,7 @@
         await loadStats();
         await checkEngineStatus();
         if (currentPanel === 'approval') await loadApprovalQueue();
-        else if (currentPanel === 'skipped') await loadSkippedEmails();
+        else if (currentPanel === 'skipped') await loadSkippedEmails(true);
         else if (currentPanel === 'emails') await loadEmails();
         else if (currentPanel === 'activity') await loadActivity();
         else if (currentPanel === 'overview') await loadActivity();
@@ -820,7 +820,7 @@
       document.getElementById('topbarTitle').textContent = title;
       if (name === 'emails') loadEmails();
       if (name === 'approval') loadApprovalQueue();
-      if (name === 'skipped') loadSkippedEmails();
+      if (name === 'skipped') loadSkippedEmails(true);
       if (name === 'accounts') loadAccounts();
       if (name === 'activity') loadActivity();
       if (name === 'settings') loadSettings();
@@ -1294,47 +1294,76 @@
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
-    // ─── Skipped Emails Review ───
-    async function loadSkippedEmails() {
+    // ─── Skipped Emails Review (paginated) ───
+    let skippedAllEmails = [];   // full cached list
+    let skippedShown = 0;       // how many currently rendered
+    const SKIPPED_PAGE = 50;    // emails per page
+
+    async function loadSkippedEmails(reset = false) {
       try {
-        const url = API('/skipped-emails?limit=1000' + (selectedAccountId ? `&account_id=${selectedAccountId}` : ''));
-        const emails = await fetch(url).then(r => r.json());
-        document.getElementById('skippedInfo').textContent = `${emails.length} skipped email(s)`;
-        // Update nav badge
+        if (reset || !skippedAllEmails.length) {
+          const url = API('/skipped-emails?limit=5000' + (selectedAccountId ? `&account_id=${selectedAccountId}` : ''));
+          skippedAllEmails = await fetch(url).then(r => r.json());
+          skippedShown = 0;
+          document.getElementById('skippedList').innerHTML = '';
+        }
+        const total = skippedAllEmails.length;
+        document.getElementById('skippedInfo').textContent = `${total} skipped email(s)`;
         const badge = document.getElementById('navSkippedCount');
-        if (emails.length > 0) { badge.style.display='inline'; badge.textContent=emails.length; }
+        if (total > 0) { badge.style.display='inline'; badge.textContent=total; }
         else { badge.style.display='none'; }
-        if (!emails.length) {
+        if (!total) {
           document.getElementById('skippedList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>No skipped emails</h3><p>The AI hasn\'t skipped any emails yet, or all skipped emails have been reviewed.</p></div>';
           return;
         }
-        const classBadge = (c) => {
-          const map = { auto_reply:'badge-gray', newsletter:'badge-purple', spam:'badge-red', bounce:'badge-red', out_of_office:'badge-yellow', notification:'badge-blue', other:'badge-gray' };
-          return `<span class="badge-pill ${map[c]||'badge-gray'}">${c}</span>`;
-        };
-        document.getElementById('skippedList').innerHTML = emails.map(e => `
-          <div class="email-card">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start">
-              <div style="flex:1">
-                <div class="from"><i class="fas fa-user" style="color:var(--text3);margin-right:4px"></i> ${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
-                <div class="subject"><strong>Subject:</strong> ${esc(e.subject)}</div>
-                <div class="meta">
-                  ${classBadge(e.classification)}
-                  <span class="badge-pill badge-gray">skipped</span>
-                  <span>${esc(e.account_email||'')}</span>
-                  <span>${timeAgo(e.created_at)}</span>
-                </div>
+        renderSkippedPage();
+      } catch(e) { console.error('Skipped emails error:', e); }
+    }
+
+    function renderSkippedPage() {
+      const classBadge = (c) => {
+        const map = { auto_reply:'badge-gray', newsletter:'badge-purple', spam:'badge-red', bounce:'badge-red', out_of_office:'badge-yellow', notification:'badge-blue', other:'badge-gray' };
+        return `<span class="badge-pill ${map[c]||'badge-gray'}">${c}</span>`;
+      };
+      const nextBatch = skippedAllEmails.slice(skippedShown, skippedShown + SKIPPED_PAGE);
+      const html = nextBatch.map(e => `
+        <div class="email-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div style="flex:1">
+              <div class="from"><i class="fas fa-user" style="color:var(--text3);margin-right:4px"></i> ${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
+              <div class="subject"><strong>Subject:</strong> ${esc(e.subject)}</div>
+              <div class="meta">
+                ${classBadge(e.classification)}
+                <span class="badge-pill badge-gray">skipped</span>
+                <span>${esc(e.account_email||'')}</span>
+                <span>${timeAgo(e.created_at)}</span>
               </div>
             </div>
-            ${e.classification_reason ? `<div style="font-size:11px;color:var(--text3);margin-top:6px;padding:6px 10px;background:var(--bg2);border-radius:6px"><i class="fas fa-robot" style="margin-right:4px"></i> <strong>AI Reason:</strong> ${esc(e.classification_reason)}</div>` : ''}
-            <div class="body-preview">${esc((e.body_text||'').substring(0,400))}</div>
-            <div class="actions">
-              <button class="btn btn-success btn-sm" onclick="forceDraftReply(${e.id})"><i class="fas fa-pen-to-square"></i> Draft Reply</button>
-              <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><i class="fas fa-eye"></i> View Full</button>
-            </div>
           </div>
-        `).join('');
-      } catch(e) { console.error('Skipped emails error:', e); }
+          ${e.classification_reason ? `<div style="font-size:11px;color:var(--text3);margin-top:6px;padding:6px 10px;background:var(--bg2);border-radius:6px"><i class="fas fa-robot" style="margin-right:4px"></i> <strong>AI Reason:</strong> ${esc(e.classification_reason)}</div>` : ''}
+          <div class="body-preview">${esc((e.body_text||'').substring(0,400))}</div>
+          <div class="actions">
+            <button class="btn btn-success btn-sm" onclick="forceDraftReply(${e.id})"><i class="fas fa-pen-to-square"></i> Draft Reply</button>
+            <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><i class="fas fa-eye"></i> View Full</button>
+          </div>
+        </div>
+      `).join('');
+      // Remove old "load more" button if present
+      const oldBtn = document.getElementById('skippedLoadMore');
+      if (oldBtn) oldBtn.remove();
+      document.getElementById('skippedList').insertAdjacentHTML('beforeend', html);
+      skippedShown += nextBatch.length;
+      // Add "load more" if there are more
+      if (skippedShown < skippedAllEmails.length) {
+        const remaining = skippedAllEmails.length - skippedShown;
+        document.getElementById('skippedList').insertAdjacentHTML('beforeend',
+          `<div id="skippedLoadMore" style="text-align:center;padding:16px">
+            <button class="btn btn-secondary" onclick="renderSkippedPage()"><i class="fas fa-arrow-down"></i> Load More (${remaining} remaining)</button>
+          </div>`);
+      } else {
+        document.getElementById('skippedList').insertAdjacentHTML('beforeend',
+          `<div style="text-align:center;padding:12px;font-size:12px;color:var(--text3)">Showing all ${skippedAllEmails.length} skipped emails</div>`);
+      }
     }
 
     async function forceDraftReply(id) {
@@ -1344,7 +1373,7 @@
         const r = await fetch(API(`/emails/${id}/force-draft`), { method:'POST' }).then(r => r.json());
         if (r.success) {
           toast('Draft reply created! Check the Approval Queue.', 'success');
-          loadSkippedEmails();
+          loadSkippedEmails(true);
           loadApprovalQueue();
           loadStats();
         } else {
