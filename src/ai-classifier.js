@@ -234,7 +234,7 @@ function preClassifyByHeaders(email) {
   }
 
   const from = (email.from_email || '').toLowerCase();
-  const noreplyPatterns = ['noreply@', 'no-reply@', 'donotreply@', 'do-not-reply@', 'mailer-daemon@', 'postmaster@', 'bounce@', 'notifications@'];
+  const noreplyPatterns = ['noreply@', 'no-reply@', 'donotreply@', 'do-not-reply@', 'mailer-daemon@', 'postmaster@', 'bounce@', 'notifications@', 'marketing@', 'newsletter@', 'campaigns@', 'promotions@', 'updates@', 'digest@', 'announce@', 'alerts@'];
   for (const pattern of noreplyPatterns) {
     if (from.startsWith(pattern) || from.includes(pattern)) {
       return { classification: 'notification', confidence: 0.9, reason: `Sender pattern: ${pattern}` };
@@ -254,6 +254,18 @@ function preClassifyByHeaders(email) {
     { pattern: 'mail delivery failed', type: 'bounce' },
     { pattern: 'returned mail', type: 'bounce' },
     { pattern: 'failure notice', type: 'bounce' },
+    { pattern: 'thank you for reaching out', type: 'auto_reply' },
+    { pattern: 'thank you for contacting', type: 'auto_reply' },
+    { pattern: 'thanks for reaching out', type: 'auto_reply' },
+    { pattern: 'thanks for contacting', type: 'auto_reply' },
+    { pattern: 'thank you for your inquiry', type: 'auto_reply' },
+    { pattern: 'thank you for your interest', type: 'auto_reply' },
+    { pattern: 'thank you for your submission', type: 'auto_reply' },
+    { pattern: 'thank you for your request', type: 'auto_reply' },
+    { pattern: 'we received your', type: 'auto_reply' },
+    { pattern: 'your inquiry has been', type: 'auto_reply' },
+    { pattern: 'your request has been', type: 'auto_reply' },
+    { pattern: 'your message has been', type: 'auto_reply' },
   ];
   for (const { pattern, type } of autoSubjectPatterns) {
     if (subject.includes(pattern)) {
@@ -269,7 +281,27 @@ function preClassifyByHeaders(email) {
     { pattern: 'this mailbox is not monitored', type: 'notification' },
     { pattern: 'thank you for contacting', type: 'auto_reply' },
     { pattern: 'we have received your', type: 'auto_reply' },
+    { pattern: 'we\'ve received your', type: 'auto_reply' },
+    { pattern: 'we received your', type: 'auto_reply' },
     { pattern: 'your request has been received', type: 'auto_reply' },
+    { pattern: 'your inquiry has been received', type: 'auto_reply' },
+    { pattern: 'your message has been received', type: 'auto_reply' },
+    { pattern: 'a member of our team will', type: 'auto_reply' },
+    { pattern: 'one of our team members will', type: 'auto_reply' },
+    { pattern: 'someone will be in touch', type: 'auto_reply' },
+    { pattern: 'someone from our team will', type: 'auto_reply' },
+    { pattern: 'a representative will', type: 'auto_reply' },
+    { pattern: 'we will get back to you', type: 'auto_reply' },
+    { pattern: 'we\'ll get back to you', type: 'auto_reply' },
+    { pattern: 'will reach out shortly', type: 'auto_reply' },
+    { pattern: 'will reach out to you', type: 'auto_reply' },
+    { pattern: 'will be in touch shortly', type: 'auto_reply' },
+    { pattern: 'will respond shortly', type: 'auto_reply' },
+    { pattern: 'will contact you shortly', type: 'auto_reply' },
+    { pattern: 'expect a response within', type: 'auto_reply' },
+    { pattern: 'within 24 hours', type: 'auto_reply' },
+    { pattern: 'within 1 business day', type: 'auto_reply' },
+    { pattern: 'within one business day', type: 'auto_reply' },
     { pattern: 'ticket #', type: 'notification' },
     { pattern: 'case number', type: 'notification' },
     { pattern: 'click here to unsubscribe', type: 'newsletter' },
@@ -298,8 +330,13 @@ function looksLikeRealReply(email) {
   if (/^(re|fw|fwd)\s*:/i.test(email.subject || '')) {
     score += 30; signals.push('RE:/FW: subject prefix');
   }
-  if (/^[a-z]+[\._-]?[a-z]+@/i.test(from) && !from.includes('info@') && !from.includes('support@') && !from.includes('sales@') && !from.includes('admin@') && !from.includes('contact@') && !from.includes('hello@') && !from.includes('help@') && !from.includes('team@')) {
+  const genericSenders = ['info@', 'support@', 'sales@', 'admin@', 'contact@', 'hello@', 'help@', 'team@', 'marketing@', 'newsletter@', 'campaigns@', 'promotions@', 'updates@', 'noreply@', 'no-reply@', 'notifications@'];
+  const isGenericSender = genericSenders.some(g => from.includes(g));
+  if (/^[a-z]+[\._-]?[a-z]+@/i.test(from) && !isGenericSender) {
     score += 15; signals.push('personal email address');
+  }
+  if (isGenericSender) {
+    score -= 25; signals.push(`generic sender (${from})`);
   }
   const fromName = (email.from_name || '').trim();
   if (fromName && /^[A-Z][a-z]+ [A-Z][a-z]/.test(fromName)) {
@@ -338,6 +375,34 @@ function looksLikeRealReply(email) {
   }
   const urlCount = (bodyText.match(/https?:\/\//g) || []).length;
   if (urlCount > 5) { score -= 15; signals.push(`${urlCount} URLs (negative)`); }
+
+  // Auto-acknowledgment negative signals — these are NOT real human replies
+  const autoAckPhrases = [
+    'we\'ve received your', 'we have received your', 'we received your',
+    'a member of our team will', 'one of our team members will',
+    'someone will be in touch', 'will reach out shortly',
+    'will get back to you', 'will respond shortly', 'will contact you shortly',
+    'your request has been received', 'your inquiry has been received',
+    'this is an automated', 'do not reply to this',
+    'expect a response within', 'within 24 hours', 'within 1 business day',
+  ];
+  let autoAckHits = 0;
+  for (const phrase of autoAckPhrases) {
+    if (bodyLower.includes(phrase)) autoAckHits++;
+  }
+  if (autoAckHits >= 1) { score -= 40; signals.push(`auto-ack phrases (${autoAckHits} hits) (negative)`); }
+
+  // Subject-line auto-reply signals
+  const subjectLower = (email.subject || '').toLowerCase();
+  const autoSubjectSignals = [
+    'thank you for reaching out', 'thank you for contacting',
+    'thanks for reaching out', 'thank you for your inquiry',
+    'thank you for your interest', 'thank you for your submission',
+    'we received your', 'your request has been',
+  ];
+  for (const phrase of autoSubjectSignals) {
+    if (subjectLower.includes(phrase)) { score -= 30; signals.push(`auto-reply subject: "${phrase}" (negative)`); break; }
+  }
 
   const isReal = score >= 40;
   return {
