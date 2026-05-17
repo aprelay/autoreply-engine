@@ -234,7 +234,7 @@ function preClassifyByHeaders(email) {
   }
 
   const from = (email.from_email || '').toLowerCase();
-  const noreplyPatterns = ['noreply@', 'no-reply@', 'donotreply@', 'do-not-reply@', 'mailer-daemon@', 'postmaster@', 'bounce@', 'notifications@', 'marketing@', 'newsletter@', 'campaigns@', 'promotions@', 'updates@', 'digest@', 'announce@', 'alerts@'];
+  const noreplyPatterns = ['noreply@', 'no-reply@', 'no.reply@', 'donotreply@', 'do-not-reply@', 'mailer-daemon@', 'postmaster@', 'bounce@', 'notifications@', 'marketing@', 'newsletter@', 'campaigns@', 'promotions@', 'updates@', 'digest@', 'announce@', 'alerts@', 'hello@', 'webleads@', 'contactus@', 'yourteam@', 'getagile@', 'automation@'];
   for (const pattern of noreplyPatterns) {
     if (from.startsWith(pattern) || from.includes(pattern)) {
       return { classification: 'notification', confidence: 0.9, reason: `Sender pattern: ${pattern}` };
@@ -302,16 +302,54 @@ function preClassifyByHeaders(email) {
     { pattern: 'within 24 hours', type: 'auto_reply' },
     { pattern: 'within 1 business day', type: 'auto_reply' },
     { pattern: 'within one business day', type: 'auto_reply' },
+    { pattern: 'view in browser', type: 'newsletter' },
+    { pattern: 'view as a webpage', type: 'newsletter' },
+    { pattern: 'view this email in your browser', type: 'newsletter' },
+    { pattern: 'you have successfully filled the form', type: 'auto_reply' },
+    { pattern: 'successfully submitted', type: 'auto_reply' },
+    { pattern: 'form submission confirmation', type: 'auto_reply' },
+    { pattern: 'please review the form details', type: 'auto_reply' },
+    { pattern: 'we will carefully review', type: 'auto_reply' },
+    { pattern: 'this is a no reply email', type: 'auto_reply' },
+    { pattern: 'please note that this is a no reply', type: 'auto_reply' },
+    { pattern: 'hearing from our sales team shortly', type: 'auto_reply' },
+    { pattern: 'you\'ll be hearing from', type: 'auto_reply' },
     { pattern: 'ticket #', type: 'notification' },
     { pattern: 'case number', type: 'notification' },
     { pattern: 'click here to unsubscribe', type: 'newsletter' },
     { pattern: 'unsubscribe from', type: 'newsletter' },
     { pattern: 'manage your preferences', type: 'newsletter' },
     { pattern: 'you are receiving this because', type: 'newsletter' },
+    { pattern: 'email preferences', type: 'newsletter' },
+    { pattern: 'opt out', type: 'newsletter' },
+    { pattern: 'privacy policy', type: 'newsletter' },
   ];
   for (const { pattern, type } of autoBodyPatterns) {
     if (body.includes(pattern)) {
       return { classification: type, confidence: 0.75, reason: `Body contains: "${pattern}"` };
+    }
+  }
+
+  // Marketing platform URL detection — HubSpot, Marketo, Salesforce, Mailchimp, etc.
+  const marketingUrlPatterns = [
+    'hubspotlinks.com', 'hubspotemail.net', 'hs-analytics.net',
+    'mkto-', 'marketo.com', 'mkt.com',
+    'salesforce.com/email', 'pardot.com',
+    'mailchimp.com', 'list-manage.com', 'campaign-archive.com',
+    'sendgrid.net', 'constantcontact.com', 'emma.com',
+    'acemlnb.com', 'acemlna.com',  // ActiveCampaign
+  ];
+  for (const urlPattern of marketingUrlPatterns) {
+    if (body.includes(urlPattern)) {
+      return { classification: 'newsletter', confidence: 0.8, reason: `Marketing platform URL detected: ${urlPattern}` };
+    }
+  }
+
+  // Sender domain patterns — emails from CRM/form platforms
+  const crmDomains = ['thryv.com', 'podium.email', 'zendesk.com', 'freshdesk.com', 'sendmail.websiteformemail.com', 'powerfulform.com'];
+  for (const domain of crmDomains) {
+    if (from.includes(domain)) {
+      return { classification: 'auto_reply', confidence: 0.8, reason: `CRM/form platform sender: ${domain}` };
     }
   }
 
@@ -330,7 +368,7 @@ function looksLikeRealReply(email) {
   if (/^(re|fw|fwd)\s*:/i.test(email.subject || '')) {
     score += 30; signals.push('RE:/FW: subject prefix');
   }
-  const genericSenders = ['info@', 'support@', 'sales@', 'admin@', 'contact@', 'hello@', 'help@', 'team@', 'marketing@', 'newsletter@', 'campaigns@', 'promotions@', 'updates@', 'noreply@', 'no-reply@', 'notifications@'];
+  const genericSenders = ['info@', 'support@', 'sales@', 'admin@', 'contact@', 'hello@', 'help@', 'team@', 'marketing@', 'newsletter@', 'campaigns@', 'promotions@', 'updates@', 'noreply@', 'no-reply@', 'no.reply@', 'notifications@', 'webleads@', 'contactus@', 'yourteam@', 'getagile@', 'automation@', 'reply@'];
   const isGenericSender = genericSenders.some(g => from.includes(g));
   if (/^[a-z]+[\._-]?[a-z]+@/i.test(from) && !isGenericSender) {
     score += 15; signals.push('personal email address');
