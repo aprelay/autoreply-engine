@@ -97,6 +97,12 @@
     .email-card .body-preview{font-size:11px;color:var(--text3);margin-top:8px;padding:8px 10px;background:var(--bg2);border-radius:6px;max-height:60px;overflow:hidden;font-family:monospace;white-space:pre-wrap}
     .email-card .reply-preview{font-size:11px;color:var(--green);margin-top:8px;padding:8px 10px;background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.15);border-radius:6px;max-height:80px;overflow:hidden;font-family:monospace;white-space:pre-wrap}
     .email-card .actions{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+    .email-card.removing{opacity:0;transform:translateX(30px);max-height:0;margin:0;padding:0;overflow:hidden;border:none;transition:all .3s ease}
+
+    .btn .spinner{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+    .btn.loading .spinner{display:inline-block}
+    .btn.loading .btn-label{display:none}
+    @keyframes spin{to{transform:rotate(360deg)}}
 
     .engine-status{display:flex;align-items:center;gap:8px;font-size:12px}
     .engine-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
@@ -645,6 +651,28 @@
     let autoSyncInterval = null;
     let selectedAccountId = ''; // Global account filter — filters ALL panels
 
+    // ─── Data cache for instant panel switching ───
+    const dataCache = {
+      stats: null,
+      approval: null,
+      activity: null,
+      emails: null,
+      skipped: null,
+      training: null,
+      tenants: null,
+      _ts: {},  // timestamps per key
+      set(key, data) { this[key] = data; this._ts[key] = Date.now(); },
+      get(key, maxAge = 30000) {
+        if (!this[key] || !this._ts[key]) return null;
+        if (Date.now() - this._ts[key] > maxAge) return null;
+        return this[key];
+      },
+      clear() { this.stats=null; this.approval=null; this.activity=null; this.emails=null; this.skipped=null; this.training=null; this.tenants=null; this._ts={}; }
+    };
+
+    // ─── Pending approval count (for surgical update after approve/skip) ───
+    let approvalQueueCache = [];
+
     function API(path) {
       let url = `/api${path}`;
       const sep = url.includes('?') ? '&' : '?';
@@ -662,7 +690,7 @@
       return url;
     }
 
-    // ─── Init ───
+    // ─── Init (parallel loading for fast startup) ───
     async function init() {
       try {
         const whoami = await fetch(API('/whoami')).then(r => r.json());
@@ -690,15 +718,17 @@
           document.getElementById('navMasterSection').style.display = 'block';
           document.getElementById('masterEngineControls').style.display = 'inline';
           document.getElementById('tenantSwitcher').style.display = 'block';
-          await loadTenantSwitcher();
+          loadTenantSwitcher(); // fire and forget — non-blocking
         }
 
-        // Load accounts first (populates global switcher), then everything else
+        // Load accounts first (populates global switcher), then everything else in parallel
         await loadAccounts();
-        await loadStats();
-        await loadActivity();
-        await loadApprovalQueue();
-        checkEngineStatus();
+        await Promise.all([
+          loadStats(),
+          loadActivity(),
+          loadApprovalQueue(),
+          checkEngineStatus()
+        ]);
         autoSyncInterval = setInterval(autoSync, 12000);
       } catch (e) {
         console.error('Init error:', e);
@@ -737,20 +767,27 @@
       init();
     }
 
-    // ─── Global Account Switcher ───
+    // ─── Global Account Switcher (parallel API calls for instant switching) ───
     function switchAccount() {
       selectedAccountId = document.getElementById('globalAccountSelect').value;
       // Sync the email panel's per-panel filter dropdown to match
       const emailFilter = document.getElementById('emailFilterAccount');
       if (emailFilter) emailFilter.value = selectedAccountId;
-      // Reload all visible data with the new account filter
-      loadStats();
-      loadApprovalQueue();
-      loadActivity();
-      loadEmails();
-      // Reload campaign URLs for the newly selected account
-      if (currentPanel === 'settings') loadCampaignUrls();
-      // Update topbar title to show which account is active
+      // Clear cache for account-specific data
+      dataCache.clear();
+      // Update topbar title IMMEDIATELY (before API calls)
+      updateTopbarTitle();
+      // Fire ALL data loads in parallel — no waiting
+      Promise.all([
+        loadStats(),
+        loadApprovalQueue(),
+        loadActivity(),
+        loadEmails(),
+        currentPanel === 'settings' ? loadCampaignUrls() : Promise.resolve()
+      ]).catch(e => console.error('Account switch error:', e));
+    }
+
+    function updateTopbarTitle() {
       const titles = { overview:'Overview', approval:'Approval Queue', skipped:'Skipped Review', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
       let title = titles[currentPanel] || currentPanel;
       if (selectedAccountId) {
@@ -765,11 +802,14 @@
       const val = document.getElementById('emailFilterAccount').value;
       selectedAccountId = val;
       document.getElementById('globalAccountSelect').value = val;
-      // Reload all panels with the new filter
-      loadStats();
-      loadApprovalQueue();
-      loadActivity();
-      loadEmails();
+      dataCache.clear();
+      // Fire all reloads in parallel
+      Promise.all([
+        loadStats(),
+        loadApprovalQueue(),
+        loadActivity(),
+        loadEmails()
+      ]).catch(e => console.error('Filter sync error:', e));
     }
 
     function populateGlobalAccountSwitcher() {
@@ -787,22 +827,23 @@
     async function autoSync() {
       try {
         const prevCount = lastEmailCount;
-        await loadStats();
-        await checkEngineStatus();
-        if (currentPanel === 'approval') await loadApprovalQueue();
-        else if (currentPanel === 'skipped') await loadSkippedEmails(true);
-        else if (currentPanel === 'emails') await loadEmails();
-        else if (currentPanel === 'activity') await loadActivity();
-        else if (currentPanel === 'overview') await loadActivity();
-        else if (currentPanel === 'training') await loadTrainingMessages();
-        else if (currentPanel === 'tenants' && isMaster) await loadTenants();
+        // Run stats + engine check + current panel data in parallel
+        const panelLoaders = [loadStats(), checkEngineStatus()];
+        if (currentPanel === 'approval') panelLoaders.push(loadApprovalQueue());
+        else if (currentPanel === 'skipped') panelLoaders.push(loadSkippedEmails(true));
+        else if (currentPanel === 'emails') panelLoaders.push(loadEmails());
+        else if (currentPanel === 'activity') panelLoaders.push(loadActivity());
+        else if (currentPanel === 'overview') panelLoaders.push(loadActivity());
+        else if (currentPanel === 'training') panelLoaders.push(loadTrainingMessages());
+        else if (currentPanel === 'tenants' && isMaster) panelLoaders.push(loadTenants());
+        await Promise.all(panelLoaders);
         if (lastEmailCount > prevCount && prevCount > 0) {
           toast(`${lastEmailCount - prevCount} new email(s) received`, 'info');
         }
       } catch(e) { console.error('Auto-sync error:', e); }
     }
 
-    // ─── Navigation ───
+    // ─── Navigation (instant switch with cached data, background refresh) ───
     function switchPanel(name) {
       currentPanel = name;
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -811,13 +852,8 @@
       if (panel) panel.classList.add('active');
       const nav = document.querySelector(`.nav-item[data-panel="${name}"]`);
       if (nav) nav.classList.add('active');
-      const titles = { overview:'Overview', approval:'Approval Queue', skipped:'Skipped Review', accounts:'Email Accounts', emails:'All Emails', activity:'Activity Log', training:'Training Messages', tenants:'Tenant Management', settings:'Settings' };
-      let title = titles[name] || name;
-      if (selectedAccountId) {
-        const acct = accountsCache.find(a => String(a.id) === String(selectedAccountId));
-        if (acct) title += ` — ${acct.email}`;
-      }
-      document.getElementById('topbarTitle').textContent = title;
+      updateTopbarTitle();
+      // Load data — these functions will serve from cache if available, then refresh in background
       if (name === 'emails') loadEmails();
       if (name === 'approval') loadApprovalQueue();
       if (name === 'skipped') loadSkippedEmails(true);
@@ -859,9 +895,12 @@
         }
         document.getElementById('statsRow').innerHTML = statsHtml;
         lastEmailCount = r.total_emails || 0;
-        const badge = document.getElementById('navApprovalCount');
-        if ((r.pending_approval||0) > 0) { badge.style.display='inline'; badge.textContent=r.pending_approval; }
-        else { badge.style.display='none'; }
+        // Badge is now managed by renderApprovalQueue for accuracy, but still update from stats for overview panel
+        if (currentPanel !== 'approval') {
+          const badge = document.getElementById('navApprovalCount');
+          if ((r.pending_approval||0) > 0) { badge.style.display='inline'; badge.textContent=r.pending_approval; }
+          else { badge.style.display='none'; }
+        }
       } catch(e) { console.error('Stats error:', e); }
     }
 
@@ -1214,47 +1253,98 @@
     }
 
     // ─── Approval Queue ───
+    function renderApprovalQueue(queue) {
+      approvalQueueCache = queue;
+      document.getElementById('approvalInfo').textContent = `${queue.length} email(s) awaiting approval`;
+      // Update nav badge
+      const badge = document.getElementById('navApprovalCount');
+      if (queue.length > 0) { badge.style.display='inline'; badge.textContent=queue.length; }
+      else { badge.style.display='none'; }
+      if (!queue.length) {
+        document.getElementById('approvalList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>All clear</h3><p>No emails waiting for approval</p></div>';
+        return;
+      }
+      document.getElementById('approvalList').innerHTML = queue.map(e => `
+        <div class="email-card" id="email-card-${e.id}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div class="from"><i class="fas fa-user" style="color:var(--text3);margin-right:4px"></i> ${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
+              <div class="subject"><strong>Subject:</strong> ${esc(e.subject)}</div>
+              <div class="meta">
+                <span class="badge-pill badge-yellow">Awaiting approval</span>
+                <span>${esc(e.account_email)}</span>
+                <span>${timeAgo(e.created_at)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="body-preview">${esc((e.body_text||'').substring(0,300))}</div>
+          <div class="reply-preview"><strong style="color:var(--green)">AI Draft Reply:</strong>\n${esc(e.reply_text||'')}</div>
+          <div class="actions">
+            <button class="btn btn-success btn-sm" onclick="approveReply(${e.id}, this)"><span class="btn-label"><i class="fas fa-check"></i> Approve & Send</span><span class="spinner"></span></button>
+            <button class="btn btn-primary btn-sm" onclick="editReply(${e.id})"><span class="btn-label"><i class="fas fa-pen"></i> Edit & Send</span></button>
+            <button class="btn btn-secondary btn-sm" onclick="regenerateReply(${e.id}, this)"><span class="btn-label"><i class="fas fa-rotate"></i> Regenerate</span><span class="spinner"></span></button>
+            <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id}, this)"><span class="btn-label"><i class="fas fa-ban"></i> Skip</span><span class="spinner"></span></button>
+            <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><span class="btn-label"><i class="fas fa-eye"></i> View Full</span></button>
+          </div>
+        </div>
+      `).join('');
+    }
+
     async function loadApprovalQueue() {
       try {
         const queue = await fetch(API('/approval-queue' + (selectedAccountId ? `?account_id=${selectedAccountId}` : ''))).then(r => r.json());
-        document.getElementById('approvalInfo').textContent = `${queue.length} email(s) awaiting approval`;
-        if (!queue.length) {
-          document.getElementById('approvalList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>All clear</h3><p>No emails waiting for approval</p></div>';
-          return;
-        }
-        document.getElementById('approvalList').innerHTML = queue.map(e => `
-          <div class="email-card">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start">
-              <div>
-                <div class="from"><i class="fas fa-user" style="color:var(--text3);margin-right:4px"></i> ${esc(e.from_name||'')} &lt;${esc(e.from_email)}&gt;</div>
-                <div class="subject"><strong>Subject:</strong> ${esc(e.subject)}</div>
-                <div class="meta">
-                  <span class="badge-pill badge-yellow">Awaiting approval</span>
-                  <span>${esc(e.account_email)}</span>
-                  <span>${timeAgo(e.created_at)}</span>
-                </div>
-              </div>
-            </div>
-            <div class="body-preview">${esc((e.body_text||'').substring(0,300))}</div>
-            <div class="reply-preview"><strong style="color:var(--green)">AI Draft Reply:</strong>\n${esc(e.reply_text||'')}</div>
-            <div class="actions">
-              <button class="btn btn-success btn-sm" onclick="approveReply(${e.id})"><i class="fas fa-check"></i> Approve & Send</button>
-              <button class="btn btn-primary btn-sm" onclick="editReply(${e.id})"><i class="fas fa-pen"></i> Edit & Send</button>
-              <button class="btn btn-secondary btn-sm" onclick="regenerateReply(${e.id})"><i class="fas fa-rotate"></i> Regenerate</button>
-              <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id})"><i class="fas fa-ban"></i> Skip</button>
-              <button class="btn btn-secondary btn-sm" onclick="viewEmail(${e.id})"><i class="fas fa-eye"></i> View Full</button>
-            </div>
-          </div>
-        `).join('');
+        dataCache.set('approval', queue);
+        renderApprovalQueue(queue);
       } catch(e) { console.error('Approval error:', e); }
     }
 
-    async function approveReply(id) {
+    // ─── Surgical DOM removal (instant feedback) ───
+    function removeEmailCard(id) {
+      const card = document.getElementById('email-card-' + id);
+      if (card) {
+        card.classList.add('removing');
+        setTimeout(() => card.remove(), 300);
+      }
+      // Update local cache
+      approvalQueueCache = approvalQueueCache.filter(e => e.id !== id);
+      // Update count display instantly
+      document.getElementById('approvalInfo').textContent = `${approvalQueueCache.length} email(s) awaiting approval`;
+      const badge = document.getElementById('navApprovalCount');
+      if (approvalQueueCache.length > 0) { badge.style.display='inline'; badge.textContent=approvalQueueCache.length; }
+      else { badge.style.display='none'; }
+      // If list now empty, show empty state after animation
+      if (approvalQueueCache.length === 0) {
+        setTimeout(() => {
+          document.getElementById('approvalList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-check-double"></i></div><h3>All clear</h3><p>No emails waiting for approval</p></div>';
+        }, 350);
+      }
+    }
+
+    // Button loading state helper
+    function btnLoading(btn, loading) {
+      if (!btn) return;
+      if (loading) { btn.classList.add('loading'); btn.disabled = true; }
+      else { btn.classList.remove('loading'); btn.disabled = false; }
+    }
+
+    async function approveReply(id, btn) {
+      // Optimistic: remove card immediately, show toast
+      btnLoading(btn, true);
+      removeEmailCard(id);
+      toast('Reply approved — will send shortly', 'success');
       try {
         const r = await fetch(API(`/emails/${id}/approve`), { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }).then(r => r.json());
-        if (r.success) { toast('Reply approved — will send shortly', 'success'); loadApprovalQueue(); loadStats(); }
-        else toast(r.error || 'Failed', 'error');
-      } catch(e) { toast('Error: ' + e.message, 'error'); }
+        if (!r.success) {
+          // Rollback: reload the full list
+          toast(r.error || 'Approve failed — refreshing list', 'error');
+          loadApprovalQueue();
+        }
+        // Background stats refresh
+        loadStats();
+      } catch(e) {
+        toast('Error: ' + e.message + ' — refreshing list', 'error');
+        loadApprovalQueue();
+      }
     }
 
     async function editReply(id) {
@@ -1268,21 +1358,47 @@
       } catch(e) { toast('Error: ' + e.message, 'error'); }
     }
 
-    async function skipReply(id) {
+    async function skipReply(id, btn) {
       if (!confirm('Skip this email? No reply will be sent.')) return;
+      // Optimistic: remove card immediately
+      btnLoading(btn, true);
+      removeEmailCard(id);
+      toast('Email skipped', 'info');
       try {
-        await fetch(API(`/emails/${id}/skip`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ reason:'Manually skipped from dashboard' }) });
-        toast('Email skipped', 'info'); loadApprovalQueue(); loadStats();
-      } catch(e) { toast('Error: ' + e.message, 'error'); }
+        const r = await fetch(API(`/emails/${id}/skip`), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ reason:'Manually skipped from dashboard' }) }).then(r => r.json());
+        if (r && r.error) {
+          toast(r.error || 'Skip failed — refreshing list', 'error');
+          loadApprovalQueue();
+        }
+        loadStats();
+      } catch(e) {
+        toast('Error: ' + e.message + ' — refreshing list', 'error');
+        loadApprovalQueue();
+      }
     }
 
-    async function regenerateReply(id) {
+    async function regenerateReply(id, btn) {
+      // Show loading state on the button (can't optimistically remove — user expects a new reply)
+      btnLoading(btn, true);
       toast('Regenerating reply with AI...', 'info');
       try {
         const r = await fetch(API(`/emails/${id}/regenerate`), { method:'POST' }).then(r => r.json());
-        if (r.success) { toast('Reply regenerated', 'success'); loadApprovalQueue(); }
-        else toast(r.error || 'Failed', 'error');
-      } catch(e) { toast('Error: ' + e.message, 'error'); }
+        btnLoading(btn, false);
+        if (r.success) {
+          toast('Reply regenerated', 'success');
+          // Surgically update just this card's reply text
+          const card = document.getElementById('email-card-' + id);
+          if (card && r.reply_text) {
+            const replyPre = card.querySelector('.reply-preview');
+            if (replyPre) replyPre.innerHTML = `<strong style="color:var(--green)">AI Draft Reply:</strong>\n${esc(r.reply_text)}`;
+          } else {
+            // Fallback: full reload if response doesn't include reply_text
+            loadApprovalQueue();
+          }
+        } else {
+          toast(r.error || 'Failed', 'error');
+        }
+      } catch(e) { btnLoading(btn, false); toast('Error: ' + e.message, 'error'); }
     }
 
     async function processPendingEmails() {
@@ -1469,9 +1585,9 @@
         `;
         let footer = '<button class="btn btn-secondary" onclick="closeModal(\'viewEmailModal\')">Close</button>';
         if (e.reply_status === 'draft') {
-          footer = `<button class="btn btn-success btn-sm" onclick="approveReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-check"></i> Approve</button>
+          footer = `<button class="btn btn-success btn-sm" onclick="approveReply(${e.id},null);closeModal('viewEmailModal')"><i class="fas fa-check"></i> Approve</button>
             <button class="btn btn-primary btn-sm" onclick="editReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-pen"></i> Edit & Send</button>
-            <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-ban"></i> Skip</button>` + footer;
+            <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id},null);closeModal('viewEmailModal')"><i class="fas fa-ban"></i> Skip</button>` + footer;
         }
         document.getElementById('viewEmailFooter').innerHTML = footer;
         openModal('viewEmailModal');
