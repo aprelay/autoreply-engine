@@ -142,6 +142,18 @@ async function processAccount(account, tenantId) {
     } catch (error) {
       console.error(`[PROCESS] ${tTag} Error processing email from ${email.from_email}:`, error.message);
       logActivity(tenantId, account.id, 'error', `Processing failed for ${email.from_email}: ${error.message}`);
+      // Self-healing: if classification was updated but reply generation failed,
+      // reset back to pending so backlog cycle retries it
+      try {
+        const current = globalStmts.getEmail.get(email.id);
+        if (current && current.classification === 'real_reply' && current.reply_status === 'pending'
+            && (!current.reply_text || current.reply_text === '')) {
+          globalStmts.resetOrphanClassification.run(email.id);
+          console.log(`[PROCESS] ${tTag} Self-heal: reset #${email.id} to pending for retry`);
+        }
+      } catch (resetErr) {
+        console.error(`[PROCESS] ${tTag} Self-heal failed for #${email.id}:`, resetErr.message);
+      }
     }
   }
 }
@@ -190,6 +202,25 @@ const BACKLOG_SUB_BATCH = 10; // process in sub-batches with small pauses to avo
 const BACKLOG_PAUSE_MS = 500; // pause between sub-batches (ms) — prevents overwhelming AI API
 
 async function processPendingBacklog() {
+  // ─── Orphan Recovery: pick up emails stuck as real_reply + pending ───
+  // These got classified but generateReply() failed (429 rate limit, etc.)
+  // and were never retried because getPendingEmails queries classification='pending'
+  try {
+    const orphans = globalStmts.getOrphanedEmails.all();
+    if (orphans.length > 0) {
+      console.log(`[BACKLOG] Found ${orphans.length} orphaned email(s) — resetting for retry`);
+      for (const orphan of orphans) {
+        globalStmts.resetOrphanClassification.run(orphan.id);
+        console.log(`[BACKLOG] Reset orphan #${orphan.id} (${orphan.from_email}) → classification='pending'`);
+        logActivity(orphan.tenant_id, orphan.account_id, 'recovery',
+          `Orphan recovery: reset email #${orphan.id} from ${orphan.from_email} for retry`,
+          'Email was classified as real_reply but reply generation failed — resetting to pending');
+      }
+    }
+  } catch (err) {
+    console.error('[BACKLOG] Orphan recovery scan error:', err.message);
+  }
+
   const activeTenants = tenantStmts.getActive.all();
   
   for (const tenant of activeTenants) {
@@ -261,6 +292,18 @@ async function processPendingBacklog() {
       } catch (error) {
         console.error(`[BACKLOG] T${tenant.id} Error processing ${email.from_email}:`, error.message);
         logActivity(tenant.id, email.account_id, 'error', `Backlog error for ${email.from_email}: ${error.message}`);
+        // Self-healing: if classification was already updated to real_reply but reply failed,
+        // reset back to pending so this email gets retried next cycle
+        try {
+          const current = globalStmts.getEmail.get(email.id);
+          if (current && current.classification === 'real_reply' && current.reply_status === 'pending'
+              && (!current.reply_text || current.reply_text === '')) {
+            globalStmts.resetOrphanClassification.run(email.id);
+            console.log(`[BACKLOG] T${tenant.id} Self-heal: reset #${email.id} to pending for retry`);
+          }
+        } catch (resetErr) {
+          console.error(`[BACKLOG] T${tenant.id} Self-heal failed for #${email.id}:`, resetErr.message);
+        }
       }
     }
     

@@ -463,6 +463,21 @@ const globalStmts = {
   markEmailSkipped: db.prepare("UPDATE emails SET reply_status='skipped', classification_reason=? WHERE id=?"),
   approveEmail: db.prepare("UPDATE emails SET reply_status='scheduled', reply_scheduled_for=datetime('now') WHERE id=?"),
 
+  // Orphan recovery: emails classified as real_reply but reply generation failed
+  // They have classification='real_reply' + reply_status='pending' + no reply text — permanently stuck
+  getOrphanedEmails: db.prepare(`
+    SELECT * FROM emails
+    WHERE classification = 'real_reply'
+      AND reply_status = 'pending'
+      AND (reply_text IS NULL OR reply_text = '')
+    ORDER BY id ASC
+  `),
+  // Reset orphan back to pending classification so backlog cycle retries it
+  resetOrphanClassification: db.prepare(`
+    UPDATE emails SET classification = 'pending', classification_reason = 'Reset: reply generation failed, retrying'
+    WHERE id = ?
+  `),
+
   // Pending/scheduled replies (cross-tenant for orchestrator send loop)
   getScheduledReplies: db.prepare(`
     SELECT e.id as id, e.tenant_id, e.account_id, e.uid, e.message_id, e.from_email, e.from_name,
