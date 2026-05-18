@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
 import {
-  tenantStmts, getTenantStmts, globalStmts, logActivity,
+  db, tenantStmts, getTenantStmts, globalStmts, logActivity,
   getTenantAIConfig, getTenantCampaignUrls, getAccountCampaignUrls, getTenantGuardSettings, resolveAIConfig,
 } from './database.js';
 import { fetchNewEmails, sendReply, testImapConnection, testSmtpConnection } from './email-engine.js';
@@ -942,6 +942,127 @@ app.put('/api/guard-settings', resolveTenantAuth, (req, res) => {
   logActivity(req.tenantId, null, 'settings', 'Conversation guard updated',
     `Max replies: ${b.max_replies_per_sender}, Cooldown: ${b.sender_cooldown_hours}h`);
   res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════
+// BULK UN-SKIP: Recover guard-blocked real replies (with duplicate check)
+// ═══════════════════════════════════════════
+
+app.post('/api/bulk-unskip', resolveTenantAuth, async (req, res) => {
+  try {
+    const { account_id, dry_run } = req.body || {};
+
+    // Find all guard-blocked real_reply emails
+    let guardBlocked;
+    if (account_id) {
+      guardBlocked = db.prepare(`
+        SELECT e.id, e.account_id, e.from_email, e.from_name, e.subject,
+               e.classification_reason, e.reply_status, e.reply_text
+        FROM emails e
+        WHERE e.tenant_id = ? AND e.account_id = ?
+          AND e.classification = 'real_reply'
+          AND e.reply_status = 'skipped'
+          AND e.classification_reason LIKE '%Conversation guard%'
+        ORDER BY e.id DESC
+      `).all(req.tenantId, parseInt(account_id, 10));
+    } else {
+      guardBlocked = db.prepare(`
+        SELECT e.id, e.account_id, e.from_email, e.from_name, e.subject,
+               e.classification_reason, e.reply_status, e.reply_text
+        FROM emails e
+        WHERE e.tenant_id = ?
+          AND e.classification = 'real_reply'
+          AND e.reply_status = 'skipped'
+          AND e.classification_reason LIKE '%Conversation guard%'
+        ORDER BY e.id DESC
+      `).all(req.tenantId);
+    }
+
+    console.log(`[BULK-UNSKIP] Found ${guardBlocked.length} guard-blocked emails`);
+
+    // Duplicate check: for each sender+account, check if there's already a draft/scheduled/approved reply
+    const hasPendingReply = db.prepare(`
+      SELECT COUNT(*) as cnt FROM emails
+      WHERE account_id = ? AND from_email = ? COLLATE NOCASE
+        AND reply_status IN ('draft', 'scheduled', 'approved')
+    `);
+
+    const skipped = [];   // Already have a reply in queue
+    const toGenerate = []; // Need a new reply
+
+    // Deduplicate: only process the LATEST email per sender+account combo
+    const seenSenders = new Map(); // key: "accountId|from_email_lower" → latest email
+    for (const email of guardBlocked) {
+      const key = `${email.account_id}|${email.from_email.toLowerCase()}`;
+      if (!seenSenders.has(key)) {
+        seenSenders.set(key, email);
+      }
+      // guardBlocked is ordered by id DESC, so first seen = latest
+    }
+
+    for (const [key, email] of seenSenders) {
+      const existing = hasPendingReply.get(email.account_id, email.from_email);
+      if (existing && existing.cnt > 0) {
+        skipped.push({ id: email.id, from_email: email.from_email, reason: `Already has ${existing.cnt} reply(s) in queue` });
+      } else {
+        toGenerate.push(email);
+      }
+    }
+
+    console.log(`[BULK-UNSKIP] ${toGenerate.length} to generate, ${skipped.length} already have replies in queue`);
+
+    if (dry_run) {
+      return res.json({
+        success: true,
+        dry_run: true,
+        total_guard_blocked: guardBlocked.length,
+        unique_senders: seenSenders.size,
+        to_generate: toGenerate.length,
+        already_in_queue: skipped.length,
+        skipped_detail: skipped,
+        will_generate: toGenerate.map(e => ({ id: e.id, from_email: e.from_email, subject: e.subject })),
+      });
+    }
+
+    // Generate replies for the ones that need them
+    const ts = getTenantStmts(req.tenantId);
+    const results = { generated: 0, failed: 0, skipped: skipped.length, errors: [] };
+
+    for (const email of toGenerate) {
+      try {
+        const account = ts.getAccount.get(email.account_id, req.tenantId);
+        if (!account) {
+          results.errors.push({ id: email.id, error: 'Account not found' });
+          results.failed++;
+          continue;
+        }
+
+        const replyText = await generateReply(email, account, req.tenantId);
+        globalStmts.updateEmailReply.run({
+          reply_status: 'draft',
+          reply_text: replyText,
+          reply_scheduled_for: null,
+          id: email.id,
+        });
+        logActivity(req.tenantId, account.id, 'unskipped',
+          `Bulk un-skip: draft generated for ${email.from_email}`,
+          replyText.substring(0, 200));
+        results.generated++;
+      } catch (err) {
+        results.errors.push({ id: email.id, from_email: email.from_email, error: err.message });
+        results.failed++;
+      }
+    }
+
+    console.log(`[BULK-UNSKIP] Done: ${results.generated} generated, ${results.failed} failed, ${results.skipped} skipped (already in queue)`);
+    logActivity(req.tenantId, null, 'bulk_unskip',
+      `Bulk un-skip: ${results.generated} drafts, ${results.skipped} already in queue, ${results.failed} failed`);
+
+    res.json({ success: true, ...results });
+  } catch (e) {
+    console.error('[BULK-UNSKIP] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════
