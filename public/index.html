@@ -263,6 +263,10 @@
         <div class="panel" id="panel-skipped">
           <div class="toolbar">
             <button class="btn btn-secondary btn-sm" onclick="loadSkippedEmails(true)"><i class="fas fa-sync"></i> Refresh</button>
+            <button class="btn btn-warning btn-sm" id="btnBulkUnskip" onclick="bulkUnskip()">
+              <span class="btn-label"><i class="fas fa-shield-alt"></i> Recover Guard-Blocked</span>
+              <span class="spinner"></span>
+            </button>
             <span style="font-size:12px;color:var(--text3)" id="skippedInfo"></span>
           </div>
           <div class="card" style="background:rgba(245,158,11,.05);border-color:rgba(245,158,11,.2);margin-bottom:16px">
@@ -585,6 +589,22 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('addTenantModal')">Cancel</button>
         <button class="btn btn-primary" onclick="saveTenant()"><i class="fas fa-save"></i> Create Tenant</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BULK UN-SKIP PREVIEW MODAL -->
+  <div class="modal-overlay" id="bulkUnskipModal">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <h3><i class="fas fa-shield-alt" style="color:var(--orange)"></i> Recover Guard-Blocked Emails</h3>
+        <button class="btn-ghost" onclick="closeModal('bulkUnskipModal')"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body" id="bulkUnskipBody">
+        <div style="text-align:center;padding:20px;color:var(--text3)"><i class="fas fa-spinner fa-spin"></i> Scanning...</div>
+      </div>
+      <div class="modal-footer" id="bulkUnskipFooter">
+        <button class="btn btn-secondary" onclick="closeModal('bulkUnskipModal')">Cancel</button>
       </div>
     </div>
   </div>
@@ -1865,6 +1885,133 @@
       el.innerHTML = `<i class="fas ${icons[type]||icons.info}" style="margin-top:1px"></i><span style="flex:1">${esc(msg)}</span><span style="cursor:pointer;color:var(--text3)" onclick="this.parentElement.remove()"><i class="fas fa-times"></i></span>`;
       document.getElementById('toastContainer').appendChild(el);
       setTimeout(() => { if(el.parentElement) el.remove(); }, 5000);
+    }
+
+    // ─── Bulk Un-Skip (Recover Guard-Blocked) ───
+    async function bulkUnskip() {
+      const btn = document.getElementById('btnBulkUnskip');
+      btnLoading(btn, true);
+      try {
+        // Step 1: Dry run to preview
+        const acctParam = selectedAccountId ? `&account_id=${selectedAccountId}` : '';
+        const preview = await fetch(API('/bulk-unskip'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_id: selectedAccountId || undefined, dry_run: true })
+        }).then(r => r.json());
+
+        btnLoading(btn, false);
+
+        if (!preview.success) {
+          toast(preview.error || 'Failed to scan guard-blocked emails', 'error');
+          return;
+        }
+
+        // Step 2: Show preview in modal
+        const body = document.getElementById('bulkUnskipBody');
+        const footer = document.getElementById('bulkUnskipFooter');
+
+        if (preview.total_guard_blocked === 0) {
+          body.innerHTML = `
+            <div style="text-align:center;padding:30px">
+              <div style="font-size:36px;color:var(--green);margin-bottom:12px"><i class="fas fa-check-circle"></i></div>
+              <h3 style="color:var(--text);margin-bottom:6px">No Guard-Blocked Emails</h3>
+              <p style="font-size:13px;color:var(--text2)">All real replies are being handled correctly. Nothing to recover.</p>
+            </div>`;
+          footer.innerHTML = '<button class="btn btn-secondary" onclick="closeModal(\'bulkUnskipModal\')">Close</button>';
+          openModal('bulkUnskipModal');
+          return;
+        }
+
+        let statsHtml = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+            <div style="background:var(--bg);padding:14px;border-radius:10px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--orange)">${preview.total_guard_blocked}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">Guard-Blocked Emails</div>
+            </div>
+            <div style="background:var(--bg);padding:14px;border-radius:10px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--accent)">${preview.unique_senders}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">Unique Senders</div>
+            </div>
+            <div style="background:var(--bg);padding:14px;border-radius:10px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--green)">${preview.to_generate}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">Will Generate Drafts</div>
+            </div>
+            <div style="background:var(--bg);padding:14px;border-radius:10px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--text3)">${preview.already_in_queue}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">Already In Queue (skip)</div>
+            </div>
+          </div>`;
+
+        // Show emails that will get drafts
+        if (preview.will_generate && preview.will_generate.length > 0) {
+          statsHtml += `<div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:8px"><i class="fas fa-pen-to-square"></i> Will generate drafts for:</div>`;
+          statsHtml += '<div style="max-height:180px;overflow-y:auto;margin-bottom:12px">';
+          for (const e of preview.will_generate) {
+            statsHtml += `<div style="font-size:12px;padding:6px 10px;background:var(--bg);border-radius:6px;margin-bottom:4px;border:1px solid var(--border)">
+              <span style="color:var(--text)">${esc(e.from_email)}</span>
+              <span style="color:var(--text3);margin-left:8px">${esc((e.subject || '').substring(0, 60))}</span>
+            </div>`;
+          }
+          statsHtml += '</div>';
+        }
+
+        if (preview.to_generate === 0) {
+          statsHtml += `<div style="background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:12px;font-size:12px;color:var(--green)">
+            <i class="fas fa-check"></i> All guard-blocked senders already have replies in the queue. Nothing new to generate.
+          </div>`;
+        }
+
+        body.innerHTML = statsHtml;
+
+        if (preview.to_generate > 0) {
+          footer.innerHTML = `
+            <button class="btn btn-secondary" onclick="closeModal('bulkUnskipModal')">Cancel</button>
+            <button class="btn btn-warning" id="btnConfirmUnskip" onclick="executeBulkUnskip()">
+              <span class="btn-label"><i class="fas fa-bolt"></i> Generate ${preview.to_generate} Draft(s)</span>
+              <span class="spinner"></span>
+            </button>`;
+        } else {
+          footer.innerHTML = '<button class="btn btn-secondary" onclick="closeModal(\'bulkUnskipModal\')">Close</button>';
+        }
+
+        openModal('bulkUnskipModal');
+      } catch (e) {
+        btnLoading(btn, false);
+        toast('Error scanning guard-blocked emails: ' + e.message, 'error');
+      }
+    }
+
+    async function executeBulkUnskip() {
+      const btn = document.getElementById('btnConfirmUnskip');
+      btnLoading(btn, true);
+      try {
+        const r = await fetch(API('/bulk-unskip'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_id: selectedAccountId || undefined, dry_run: false })
+        }).then(r => r.json());
+
+        closeModal('bulkUnskipModal');
+
+        if (r.success) {
+          let msg = `Recovered: ${r.generated} draft(s) generated`;
+          if (r.skipped > 0) msg += `, ${r.skipped} already in queue`;
+          if (r.failed > 0) msg += `, ${r.failed} failed`;
+          toast(msg, r.generated > 0 ? 'success' : 'info');
+          // Refresh relevant panels
+          Promise.all([
+            loadStats(),
+            loadApprovalQueue(),
+            loadSkippedEmails(true)
+          ]).catch(e => console.error('Refresh error:', e));
+        } else {
+          toast(r.error || 'Bulk un-skip failed', 'error');
+        }
+      } catch (e) {
+        btnLoading(btn, false);
+        toast('Error: ' + e.message, 'error');
+      }
     }
 
     document.addEventListener('click', (e) => {
