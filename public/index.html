@@ -1983,8 +1983,10 @@
     }
 
     async function executeBulkUnskip() {
-      const btn = document.getElementById('btnConfirmUnskip');
-      btnLoading(btn, true);
+      // Close modal immediately — generation happens in background
+      closeModal('bulkUnskipModal');
+      toast('Generating drafts in background... This takes ~10s per email. Check Approval Queue shortly.', 'info');
+
       try {
         const r = await fetch(API('/bulk-unskip'), {
           method: 'POST',
@@ -1992,10 +1994,8 @@
           body: JSON.stringify({ account_id: selectedAccountId || undefined, dry_run: false })
         }).then(r => r.json());
 
-        closeModal('bulkUnskipModal');
-
         if (r.success) {
-          let msg = `Recovered: ${r.generated} draft(s) generated`;
+          let msg = `✓ Done: ${r.generated} draft(s) generated`;
           if (r.skipped > 0) msg += `, ${r.skipped} already in queue`;
           if (r.failed > 0) msg += `, ${r.failed} failed`;
           toast(msg, r.generated > 0 ? 'success' : 'info');
@@ -2009,8 +2009,7 @@
           toast(r.error || 'Bulk un-skip failed', 'error');
         }
       } catch (e) {
-        btnLoading(btn, false);
-        toast('Error: ' + e.message, 'error');
+        toast('Bulk un-skip error: ' + e.message, 'error');
       }
     }
 
