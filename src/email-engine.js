@@ -10,8 +10,9 @@ import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
 import { globalStmts, logActivity } from './database.js';
 
-// ─── IMAP: Fetch new emails (tenant-aware) ───
-export async function fetchNewEmails(account, tenantId = 1) {
+// ─── IMAP: Fetch new emails (tenant-aware, with retry) ───
+export async function fetchNewEmails(account, tenantId = 1, _retryCount = 0) {
+  const MAX_RETRIES = 2;
   const client = new ImapFlow({
     host: account.imap_host,
     port: account.imap_port,
@@ -151,9 +152,20 @@ export async function fetchNewEmails(account, tenantId = 1) {
 
     await client.logout();
   } catch (error) {
-    console.error(`[IMAP] Error for ${account.email}:`, error.message);
-    logActivity(tenantId, account.id, 'error', `IMAP fetch failed: ${error.message}`);
+    const errDetail = error.responseStatus || error.serverResponseCode || error.code || '';
+    const fullMsg = errDetail ? `${error.message} [${errDetail}]` : error.message;
+    console.error(`[IMAP] Error for ${account.email}:`, fullMsg, error.stack?.split('\n').slice(0, 3).join(' | '));
     try { await client.logout(); } catch(e) {}
+
+    // Retry on transient "Command failed" errors (IMAP server throttling)
+    if (_retryCount < MAX_RETRIES && /command failed|connection|timeout|ECONNRESET/i.test(error.message)) {
+      const delay = (2 + _retryCount * 3) * 1000; // 2s, 5s
+      console.log(`[IMAP] Retrying ${account.email} in ${delay/1000}s (attempt ${_retryCount + 1}/${MAX_RETRIES})...`);
+      await new Promise(r => setTimeout(r, delay));
+      return fetchNewEmails(account, tenantId, _retryCount + 1);
+    }
+
+    logActivity(tenantId, account.id, 'error', `IMAP fetch failed: ${fullMsg}`, (error.response || '').substring(0, 200));
     throw error;
   }
 
