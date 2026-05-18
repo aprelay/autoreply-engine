@@ -1874,8 +1874,11 @@
       if (m < 1) return 'just now';
       if (m < 60) return m + 'm ago';
       const h = Math.floor(m/60);
-      if (h < 24) return h + 'h ago';
-      return Math.floor(h/24) + 'd ago';
+      const rm = m % 60;
+      if (h < 24) return rm > 0 ? h + 'h ' + rm + 'm ago' : h + 'h ago';
+      const days = Math.floor(h/24);
+      if (days < 30) return days + 'd ago';
+      return Math.floor(days/30) + 'mo ago';
     }
     function toast(msg, type) {
       type = type || 'info';
