@@ -442,7 +442,7 @@ app.get('/api/approval-queue', resolveTenantAuth, (req, res) => {
 });
 
 // Bulk update URLs in all draft replies (swap old URLs for fresh rotated ones)
-app.post('/api/approval-queue/update-urls', resolveTenantAuth, (req, res) => {
+app.post('/api/approval-queue/update-urls', resolveTenantAuth, async (req, res) => {
   try {
     const ts = getTenantStmts(req.tenantId);
     const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
@@ -466,11 +466,20 @@ app.post('/api/approval-queue/update-urls', resolveTenantAuth, (req, res) => {
     const oldUrl = req.body.old_url || '';
 
     let updated = 0;
+    let generated = 0;
+    let genFailed = 0;
     let urlIdx = 0; // rotate through new URLs
 
+    // Split queue into emails with existing replies and empty drafts
+    const withText = [];
+    const emptyDrafts = [];
     for (const email of queue) {
-      if (!email.reply_text) continue;
+      if (email.reply_text) withText.push(email);
+      else emptyDrafts.push(email);
+    }
 
+    // ── 1. Replace URLs in existing drafts (instant) ──
+    for (const email of withText) {
       let newText = email.reply_text;
       const freshUrl = newUrls[urlIdx % newUrls.length];
       urlIdx++;
@@ -504,6 +513,53 @@ app.post('/api/approval-queue/update-urls', resolveTenantAuth, (req, res) => {
         });
         updated++;
       }
+    }
+
+    // ── 2. Generate replies for empty drafts in background (uses current campaign URLs) ──
+    if (emptyDrafts.length > 0) {
+      console.log(`[UPDATE-URLS] T${req.tenantId} Generating replies for ${emptyDrafts.length} empty draft(s) in background...`);
+      // Respond immediately with URL-replaced count + info about background generation
+      logActivity(req.tenantId, null, 'settings',
+        `Bulk URL update: ${updated} draft(s) updated, generating ${emptyDrafts.length} empty draft(s) in background`,
+        newUrls.join(', '));
+
+      // Start background generation (don't await — returns response immediately)
+      const tenantId = req.tenantId;
+      (async () => {
+        let bgGenerated = 0;
+        let bgFailed = 0;
+        for (const email of emptyDrafts) {
+          try {
+            const account = ts.getAccount.get(email.account_id, tenantId);
+            if (account) {
+              const replyText = await generateReply(email, account, tenantId);
+              globalStmts.updateEmailReply.run({
+                reply_status: 'draft',
+                reply_text: replyText,
+                reply_scheduled_for: null,
+                id: email.id,
+              });
+              bgGenerated++;
+            }
+          } catch (genErr) {
+            bgFailed++;
+            console.error(`[UPDATE-URLS] Failed to generate reply for email #${email.id}:`, genErr.message);
+          }
+        }
+        console.log(`[UPDATE-URLS] T${tenantId} Background generation complete: ${bgGenerated} generated, ${bgFailed} failed`);
+        logActivity(tenantId, null, 'settings',
+          `Background reply generation complete: ${bgGenerated} generated, ${bgFailed} failed`,
+          newUrls.join(', '));
+      })();
+
+      return res.json({
+        success: true,
+        updated,
+        total: queue.length,
+        new_urls: newUrls,
+        generating: emptyDrafts.length,
+        message: `${updated} draft(s) updated. ${emptyDrafts.length} empty draft(s) are being generated in background — refresh the page in a few minutes.`
+      });
     }
 
     logActivity(req.tenantId, null, 'settings', `Bulk URL update: ${updated} draft(s) updated`, newUrls.join(', '));

@@ -1532,7 +1532,13 @@
           body: JSON.stringify({ old_url: oldUrl })
         }).then(r => r.json());
         if (r.success) {
-          toast(`URLs updated in ${r.updated} of ${r.total} draft(s)`, 'success');
+          let msg = `URLs updated in ${r.updated} of ${r.total} draft(s)`;
+          if (r.generating) {
+            msg += `. ${r.generating} empty draft(s) generating in background — refresh in a few minutes.`;
+            toast(msg, 'info');
+          } else {
+            toast(msg, 'success');
+          }
           loadApprovalQueue();
         } else {
           toast(r.error || 'Failed', 'error');
