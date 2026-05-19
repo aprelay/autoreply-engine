@@ -161,9 +161,10 @@ async function processAccount(account, tenantId) {
 // ─── Send scheduled replies that are due (cross-tenant, throttled) ───
 // Throttle: max emails per account per cycle + random delay between sends
 // Prevents spam filters from flagging rapid-fire sends from the same mailbox
-const SEND_MAX_PER_ACCOUNT = 3;    // max emails per account per fetch cycle
-const SEND_MIN_DELAY_SEC = 45;     // minimum pause between sends (same account)
-const SEND_MAX_DELAY_SEC = 90;     // maximum pause between sends (same account)
+const SEND_MAX_PER_ACCOUNT = 2;    // max emails per account per 120s fetch cycle
+const SEND_MIN_DELAY_SEC = 80;     // minimum pause between sends (same account)
+const SEND_MAX_DELAY_SEC = 100;    // maximum pause between sends (same account)
+// Pace: ~2 emails per 120s cycle → 30 emails in ~40-42 min
 
 async function sendScheduledReplies() {
   const due = globalStmts.getScheduledReplies.all();
