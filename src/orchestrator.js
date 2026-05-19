@@ -158,48 +158,77 @@ async function processAccount(account, tenantId) {
   }
 }
 
-// ─── Send scheduled replies that are due (cross-tenant) ───
+// ─── Send scheduled replies that are due (cross-tenant, throttled) ───
+// Throttle: max emails per account per cycle + random delay between sends
+// Prevents spam filters from flagging rapid-fire sends from the same mailbox
+const SEND_MAX_PER_ACCOUNT = 3;    // max emails per account per fetch cycle
+const SEND_MIN_DELAY_SEC = 45;     // minimum pause between sends (same account)
+const SEND_MAX_DELAY_SEC = 90;     // maximum pause between sends (same account)
+
 async function sendScheduledReplies() {
   const due = globalStmts.getScheduledReplies.all();
   if (due.length === 0) return;
 
   console.log(`[SEND] ${due.length} scheduled reply(s) due`);
 
+  // Group by account to enforce per-account throttling
+  const byAccount = {};
   for (const row of due) {
-    const account = {
-      id: row.account_id,
-      email: row.email,
-      display_name: row.display_name,
-      imap_host: row.imap_host,
-      imap_port: row.imap_port,
-      smtp_host: row.smtp_host,
-      smtp_port: row.smtp_port,
-      password: row.password,
-      persona_name: row.persona_name,
-      persona_title: row.persona_title,
-    };
-    const email = {
-      id: row.id,
-      uid: row.uid,
-      from_email: row.from_email,
-      from_name: row.from_name,
-      subject: row.subject,
-      message_id: row.message_id,
-      body_text: row.body_text,
-      body_html: row.body_html,
-      received_at: row.received_at,
-    };
+    if (!byAccount[row.account_id]) byAccount[row.account_id] = [];
+    byAccount[row.account_id].push(row);
+  }
 
-    try {
-      console.log(`[SEND] T${row.tenant_id} Sending reply to ${email.from_email} (email #${email.id})...`);
-      await sendReply(account, email, row.reply_text, row.tenant_id);
-    } catch (sendErr) {
-      console.error(`[SEND] T${row.tenant_id} Unexpected error sending to ${email.from_email} (#${email.id}):`, sendErr.message);
+  for (const [accountId, rows] of Object.entries(byAccount)) {
+    const batch = rows.slice(0, SEND_MAX_PER_ACCOUNT);
+    const deferred = rows.length - batch.length;
+    if (deferred > 0) {
+      console.log(`[SEND] Account ${accountId}: sending ${batch.length} now, ${deferred} deferred to next cycle`);
+    }
+
+    for (let i = 0; i < batch.length; i++) {
+      const row = batch[i];
+      const account = {
+        id: row.account_id,
+        email: row.email,
+        display_name: row.display_name,
+        imap_host: row.imap_host,
+        imap_port: row.imap_port,
+        smtp_host: row.smtp_host,
+        smtp_port: row.smtp_port,
+        password: row.password,
+        persona_name: row.persona_name,
+        persona_title: row.persona_title,
+      };
+      const email = {
+        id: row.id,
+        uid: row.uid,
+        from_email: row.from_email,
+        from_name: row.from_name,
+        subject: row.subject,
+        message_id: row.message_id,
+        body_text: row.body_text,
+        body_html: row.body_html,
+        received_at: row.received_at,
+      };
+
       try {
-        globalStmts.markEmailFailed.run(sendErr.message, email.id);
-        logActivity(row.tenant_id, account.id, 'error', `Send crashed for ${email.from_email}: ${sendErr.message}`);
-      } catch (dbErr) {
-        console.error(`[SEND] Failed to log send error for #${email.id}:`, dbErr.message);
+        // Throttle: wait between sends (skip delay before the first one)
+        if (i > 0) {
+          const delaySec = SEND_MIN_DELAY_SEC + Math.floor(Math.random() * (SEND_MAX_DELAY_SEC - SEND_MIN_DELAY_SEC));
+          console.log(`[SEND] Throttle: waiting ${delaySec}s before next send...`);
+          await new Promise(r => setTimeout(r, delaySec * 1000));
+        }
+
+        console.log(`[SEND] T${row.tenant_id} Sending reply to ${email.from_email} (email #${email.id}) [${i + 1}/${batch.length}]...`);
+        await sendReply(account, email, row.reply_text, row.tenant_id);
+      } catch (sendErr) {
+        console.error(`[SEND] T${row.tenant_id} Unexpected error sending to ${email.from_email} (#${email.id}):`, sendErr.message);
+        try {
+          globalStmts.markEmailFailed.run(sendErr.message, email.id);
+          logActivity(row.tenant_id, account.id, 'error', `Send crashed for ${email.from_email}: ${sendErr.message}`);
+        } catch (dbErr) {
+          console.error(`[SEND] Failed to log send error for #${email.id}:`, dbErr.message);
+        }
       }
     }
   }
