@@ -254,6 +254,7 @@
               <option value="">All accounts</option>
             </select>
             <button class="btn btn-secondary btn-sm" onclick="loadEmails()"><i class="fas fa-sync"></i> Refresh</button>
+            <button class="btn btn-warning btn-sm" id="btnRetryAllFailed" style="display:none" onclick="retryAllFailed()"><i class="fas fa-redo"></i> Retry All Failed</button>
             <span style="font-size:12px;color:var(--text3)" id="emailInfo"></span>
           </div>
           <div id="emailsList"></div>
@@ -1421,6 +1422,25 @@
       } catch(e) { btnLoading(btn, false); toast('Error: ' + e.message, 'error'); }
     }
 
+    async function retryEmail(id) {
+      toast('Retrying failed email...', 'info');
+      try {
+        const r = await fetch(API(`/emails/${id}/retry`), { method:'POST' }).then(r => r.json());
+        if (r.success) { toast('Re-scheduled for sending', 'success'); loadEmails(); loadStats(); loadActivity(); }
+        else toast(r.error || 'Retry failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function retryAllFailed() {
+      const acctParam = selectedAccountId ? `?account_id=${selectedAccountId}` : '';
+      toast('Retrying all failed emails...', 'info');
+      try {
+        const r = await fetch(API('/emails/retry-all-failed' + acctParam), { method:'POST' }).then(r => r.json());
+        if (r.success) { toast(`Re-scheduled ${r.retried} failed email(s)`, 'success'); loadEmails(); loadStats(); loadActivity(); }
+        else toast(r.error || 'Retry failed', 'error');
+      } catch(e) { toast('Error: ' + e.message, 'error'); }
+    }
+
     async function processPendingEmails() {
       toast('Processing pending emails...', 'info');
       try {
@@ -1553,7 +1573,10 @@
         const accountId = selectedAccountId || document.getElementById('emailFilterAccount')?.value || '';
         const url = accountId ? API(`/emails?account_id=${accountId}&limit=200`) : API('/emails?limit=200');
         const emails = await fetch(url).then(r => r.json());
-        document.getElementById('emailInfo').textContent = `${emails.length} email(s)`;
+        const failedCount = emails.filter(e => e.reply_status === 'failed').length;
+        document.getElementById('emailInfo').textContent = `${emails.length} email(s)` + (failedCount ? ` · ${failedCount} failed` : '');
+        const retryBtn = document.getElementById('btnRetryAllFailed');
+        if (retryBtn) retryBtn.style.display = failedCount > 0 ? '' : 'none';
         if (!emails.length) {
           document.getElementById('emailsList').innerHTML = '<div class="empty-state"><div class="icon"><i class="fas fa-inbox"></i></div><h3>No emails yet</h3></div>';
           return;
@@ -1580,6 +1603,10 @@
               ${e.confidence?`<span>Confidence: ${(e.confidence*100).toFixed(0)}%</span>`:''}
               ${e.classification_reason?`<span style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.classification_reason)}</span>`:''}
             </div>
+            ${e.reply_status==='failed'?`<div style="margin-top:6px;display:flex;align-items:center;gap:8px">
+              <span style="font-size:11px;color:var(--red);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><i class="fas fa-exclamation-triangle"></i> ${esc((e.reply_error||'Unknown error').substring(0,100))}</span>
+              <button class="btn btn-warning btn-sm" style="flex-shrink:0" onclick="event.stopPropagation();retryEmail(${e.id})"><i class="fas fa-redo"></i> Retry</button>
+            </div>`:''}
           </div>
         `).join('');
       } catch(e) { console.error('Emails error:', e); }
@@ -1614,6 +1641,9 @@
           footer = `<button class="btn btn-success btn-sm" onclick="approveReply(${e.id},null);closeModal('viewEmailModal')"><i class="fas fa-check"></i> Approve</button>
             <button class="btn btn-primary btn-sm" onclick="editReply(${e.id});closeModal('viewEmailModal')"><i class="fas fa-pen"></i> Edit & Send</button>
             <button class="btn btn-danger btn-sm" onclick="skipReply(${e.id},null);closeModal('viewEmailModal')"><i class="fas fa-ban"></i> Skip</button>` + footer;
+        }
+        if (e.reply_status === 'failed') {
+          footer = `<button class="btn btn-warning btn-sm" onclick="retryEmail(${e.id});closeModal('viewEmailModal')"><i class="fas fa-redo"></i> Retry Send</button>` + footer;
         }
         document.getElementById('viewEmailFooter').innerHTML = footer;
         openModal('viewEmailModal');

@@ -758,6 +758,42 @@ app.post('/api/emails/:id/send-now', resolveTenantAuth, async (req, res) => {
   res.json(result);
 });
 
+// Retry failed email — resets to scheduled for next send cycle
+app.post('/api/emails/:id/retry', resolveTenantAuth, (req, res) => {
+  const ts = getTenantStmts(req.tenantId);
+  const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
+  if (!email) return res.status(404).json({ error: 'Not found' });
+  if (email.reply_status !== 'failed') return res.status(400).json({ error: `Cannot retry — status is ${email.reply_status}, not failed` });
+  if (!email.reply_text || !email.reply_text.trim()) return res.status(400).json({ error: 'No reply text to send' });
+
+  db.prepare("UPDATE emails SET reply_status='scheduled', reply_error=NULL, reply_scheduled_for=? WHERE id=?")
+    .run(new Date().toISOString(), email.id);
+
+  logActivity(req.tenantId, email.account_id, 'scheduled', `Retry: re-scheduled failed reply for ${email.from_email}`);
+  res.json({ success: true });
+});
+
+// Bulk retry all failed emails for an account
+app.post('/api/emails/retry-all-failed', resolveTenantAuth, (req, res) => {
+  const accountId = req.query.account_id || req.body.account_id;
+  const ts = getTenantStmts(req.tenantId);
+  const allEmails = ts.getEmails.all(req.tenantId);
+  const failed = allEmails.filter(e => e.reply_status === 'failed' && e.reply_text && e.reply_text.trim() && (!accountId || e.account_id === parseInt(accountId)));
+
+  let retried = 0;
+  const retryStmt = db.prepare("UPDATE emails SET reply_status='scheduled', reply_error=NULL, reply_scheduled_for=? WHERE id=?");
+  const now = new Date().toISOString();
+  for (const email of failed) {
+    retryStmt.run(now, email.id);
+    retried++;
+  }
+
+  if (retried > 0) {
+    logActivity(req.tenantId, accountId ? parseInt(accountId) : null, 'scheduled', `Bulk retry: re-scheduled ${retried} failed email(s)`);
+  }
+  res.json({ success: true, retried, total_failed: failed.length });
+});
+
 // ═══════════════════════════════════════════
 // ENGINE CONTROLS
 // ═══════════════════════════════════════════
