@@ -574,16 +574,32 @@ app.post('/api/emails/:id/approve', resolveTenantAuth, (req, res) => {
   const email = ts.getEmail.get(parseInt(req.params.id), req.tenantId);
   if (!email) return res.status(404).json({ error: 'Not found' });
 
-  if (req.body.reply_text) {
-    globalStmts.updateEmailReply.run({
-      reply_status: 'scheduled',
-      reply_text: req.body.reply_text,
-      reply_scheduled_for: new Date().toISOString(),
-      id: email.id,
-    });
-  } else {
-    globalStmts.approveEmail.run(email.id);
+  // Determine the reply text (user-edited or existing)
+  let replyText = req.body.reply_text || email.reply_text || '';
+
+  // ── Rotate campaign URL at approve time ──
+  // Pick a fresh random URL from the account's (or tenant's) campaign URLs
+  if (replyText) {
+    const campaignUrls = getAccountCampaignUrls(email.account_id, req.tenantId);
+    if (campaignUrls.length > 0) {
+      const freshUrl = campaignUrls[Math.floor(Math.random() * campaignUrls.length)];
+      // Replace any campaign-like URL in the reply with the fresh one
+      replyText = replyText.replace(
+        /https?:\/\/(?!(?:www\.)?(?:linkedin\.com|outlook\.com|office\.com|microsoft\.com|gmail\.com|yahoo\.com))[^\s,)"'>]+/gi,
+        (match) => {
+          if (/unsubscribe|tracking|pixel|click\.|open\.|mail\./i.test(match)) return match;
+          return freshUrl;
+        }
+      );
+    }
   }
+
+  globalStmts.updateEmailReply.run({
+    reply_status: 'scheduled',
+    reply_text: replyText,
+    reply_scheduled_for: new Date().toISOString(),
+    id: email.id,
+  });
 
   logActivity(req.tenantId, email.account_id, 'approved', `Reply approved for ${email.from_email}`);
   res.json({ success: true });
@@ -715,17 +731,28 @@ app.post('/api/emails/:id/send-now', resolveTenantAuth, async (req, res) => {
   const account = ts.getAccount.get(email.account_id, req.tenantId);
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const replyText = req.body.reply_text || email.reply_text;
+  let replyText = req.body.reply_text || email.reply_text;
   if (!replyText) return res.status(400).json({ error: 'No reply text' });
 
-  if (req.body.reply_text) {
-    globalStmts.updateEmailReply.run({
-      reply_status: 'scheduled',
-      reply_text: req.body.reply_text,
-      reply_scheduled_for: new Date().toISOString(),
-      id: email.id,
-    });
+  // ── Rotate campaign URL at send time ──
+  const campaignUrls = getAccountCampaignUrls(email.account_id, req.tenantId);
+  if (campaignUrls.length > 0) {
+    const freshUrl = campaignUrls[Math.floor(Math.random() * campaignUrls.length)];
+    replyText = replyText.replace(
+      /https?:\/\/(?!(?:www\.)?(?:linkedin\.com|outlook\.com|office\.com|microsoft\.com|gmail\.com|yahoo\.com))[^\s,)"'>]+/gi,
+      (match) => {
+        if (/unsubscribe|tracking|pixel|click\.|open\.|mail\./i.test(match)) return match;
+        return freshUrl;
+      }
+    );
   }
+
+  globalStmts.updateEmailReply.run({
+    reply_status: 'scheduled',
+    reply_text: replyText,
+    reply_scheduled_for: new Date().toISOString(),
+    id: email.id,
+  });
 
   const result = await sendReply(account, email, replyText, req.tenantId);
   res.json(result);
