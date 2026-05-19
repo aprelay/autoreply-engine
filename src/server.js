@@ -493,9 +493,9 @@ app.post('/api/approval-queue/update-urls', resolveTenantAuth, async (req, res) 
         }
       } else {
         // Auto-detect: replace any https:// URL that looks like a campaign link
-        // Match URLs that are NOT common email/image patterns
+        // Only preserve genuine email infrastructure URLs (not google.com which AI may use as placeholder)
         newText = newText.replace(
-          /https?:\/\/(?!(?:www\.)?(?:linkedin\.com|google\.com|outlook\.com|office\.com|microsoft\.com|gmail\.com|yahoo\.com))[^\s,)"'>]+/gi,
+          /https?:\/\/(?!(?:www\.)?(?:linkedin\.com|outlook\.com|office\.com|microsoft\.com|gmail\.com|yahoo\.com))[^\s,)"'>]+/gi,
           (match) => {
             // Don't replace unsubscribe links, tracking pixels, etc.
             if (/unsubscribe|tracking|pixel|click\.|open\.|mail\./i.test(match)) return match;
