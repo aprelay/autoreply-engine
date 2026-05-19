@@ -190,8 +190,18 @@ async function sendScheduledReplies() {
       received_at: row.received_at,
     };
 
-    console.log(`[SEND] T${row.tenant_id} Sending reply to ${email.from_email} (email #${email.id})...`);
-    await sendReply(account, email, row.reply_text, row.tenant_id);
+    try {
+      console.log(`[SEND] T${row.tenant_id} Sending reply to ${email.from_email} (email #${email.id})...`);
+      await sendReply(account, email, row.reply_text, row.tenant_id);
+    } catch (sendErr) {
+      console.error(`[SEND] T${row.tenant_id} Unexpected error sending to ${email.from_email} (#${email.id}):`, sendErr.message);
+      try {
+        globalStmts.markEmailFailed.run(sendErr.message, email.id);
+        logActivity(row.tenant_id, account.id, 'error', `Send crashed for ${email.from_email}: ${sendErr.message}`);
+      } catch (dbErr) {
+        console.error(`[SEND] Failed to log send error for #${email.id}:`, dbErr.message);
+      }
+    }
   }
 }
 

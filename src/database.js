@@ -490,8 +490,8 @@ const globalStmts = {
     FROM emails e
     JOIN accounts a ON e.account_id = a.id
     JOIN tenants t ON e.tenant_id = t.id
-    WHERE e.reply_status = 'scheduled' AND e.reply_scheduled_for <= datetime('now') AND t.is_active = 1
-    ORDER BY e.reply_scheduled_for ASC
+    WHERE e.reply_status = 'scheduled' AND datetime(e.reply_scheduled_for) <= datetime('now') AND t.is_active = 1
+    ORDER BY datetime(e.reply_scheduled_for) ASC
   `),
 
   // Conversation guard (cross-tenant safe — scoped by account_id which is already tenant-scoped)
