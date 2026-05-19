@@ -460,7 +460,7 @@ const globalStmts = {
   `),
   markEmailSent: db.prepare("UPDATE emails SET reply_status='sent', reply_sent_at=datetime('now') WHERE id=?"),
   markEmailFailed: db.prepare("UPDATE emails SET reply_status='failed', reply_error=? WHERE id=?"),
-  retryFailedEmail: db.prepare("UPDATE emails SET reply_status='scheduled', reply_error=NULL, reply_scheduled_for=? WHERE id=?"),
+  retryFailedEmail: db.prepare("UPDATE emails SET reply_status='scheduled', reply_error='', reply_scheduled_for=? WHERE id=?"),
   markEmailSkipped: db.prepare("UPDATE emails SET reply_status='skipped', classification_reason=? WHERE id=?"),
   approveEmail: db.prepare("UPDATE emails SET reply_status='scheduled', reply_scheduled_for=datetime('now') WHERE id=?"),
 
