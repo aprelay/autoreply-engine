@@ -766,8 +766,7 @@ app.post('/api/emails/:id/retry', resolveTenantAuth, (req, res) => {
   if (email.reply_status !== 'failed') return res.status(400).json({ error: `Cannot retry — status is ${email.reply_status}, not failed` });
   if (!email.reply_text || !email.reply_text.trim()) return res.status(400).json({ error: 'No reply text to send' });
 
-  db.prepare("UPDATE emails SET reply_status='scheduled', reply_error=NULL, reply_scheduled_for=? WHERE id=?")
-    .run(new Date().toISOString(), email.id);
+  globalStmts.retryFailedEmail.run(new Date().toISOString(), email.id);
 
   logActivity(req.tenantId, email.account_id, 'scheduled', `Retry: re-scheduled failed reply for ${email.from_email}`);
   res.json({ success: true });
@@ -777,14 +776,13 @@ app.post('/api/emails/:id/retry', resolveTenantAuth, (req, res) => {
 app.post('/api/emails/retry-all-failed', resolveTenantAuth, (req, res) => {
   const accountId = req.query.account_id || req.body.account_id;
   const ts = getTenantStmts(req.tenantId);
-  const allEmails = ts.getEmails.all(req.tenantId);
+  const allEmails = ts.getEmails.all(req.tenantId, 5000);
   const failed = allEmails.filter(e => e.reply_status === 'failed' && e.reply_text && e.reply_text.trim() && (!accountId || e.account_id === parseInt(accountId)));
 
   let retried = 0;
-  const retryStmt = db.prepare("UPDATE emails SET reply_status='scheduled', reply_error=NULL, reply_scheduled_for=? WHERE id=?");
   const now = new Date().toISOString();
   for (const email of failed) {
-    retryStmt.run(now, email.id);
+    globalStmts.retryFailedEmail.run(now, email.id);
     retried++;
   }
 
