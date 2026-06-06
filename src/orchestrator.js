@@ -3,17 +3,23 @@
 // v1.6: Organic threaded replies — looks identical to real email client
 // v2.0: Multi-tenant — polls all active tenants, scoped guard/settings
 // v2.1: Split-loop architecture — IMAP fetch never blocked by backlog
+// v2.2: Triple-loop — send cycle fully independent of fetch/backlog
+//       Fix: sendScheduledReplies() was inside fetchCycle() and never
+//       reached when IMAP fetch was slow (e.g. 2383-email inbox).
+//       Now runs on its own 30s timer, guaranteed to execute.
 // ═══════════════════════════════════════════════════════════════
 
 import { globalStmts, logActivity, getTenantGuardSettings, getTenantStmts, tenantStmts } from './database.js';
 import { fetchNewEmails, sendReply } from './email-engine.js';
 import { classifyEmail, generateReply } from './ai-classifier.js';
 
-// Split-loop mutexes: IMAP fetch and backlog run independently
+// Triple-loop mutexes: IMAP fetch, backlog, and send all run independently
 let isFetching = false;      // Guards IMAP fetch loop (fast — seconds)
 let isBacklogging = false;   // Guards backlog processing loop (slow — minutes)
+let isSending = false;       // Guards send loop (v2.2: independent of fetch)
 let pollTimer = null;
 let backlogTimer = null;
+let sendTimer = null;
 
 // ─── Conversation Guard: Smart duplicate/loop prevention (tenant-aware) ───
 function checkConversationGuard(email, account, tenantId) {
@@ -378,8 +384,8 @@ async function fetchCycle() {
       }
     }
 
-    // Step 2: Send any scheduled replies that are due (also fast)
-    await sendScheduledReplies();
+    // v2.2: sendScheduledReplies() moved to independent sendCycle()
+    // Previously here — caused sends to never execute when IMAP was slow
 
   } catch (error) {
     console.error('[FETCH] Cycle error:', error.message);
@@ -405,17 +411,36 @@ async function backlogCycle() {
   }
 }
 
-// ─── Start/stop the polling engine (split-loop) ───
+// ─── Send cycle — v2.2: fully independent, never blocked by fetch/backlog ───
+async function sendCycle() {
+  if (isSending) {
+    console.log('[SEND-CYCLE] Previous send still running — skipping');
+    return;
+  }
+
+  isSending = true;
+  try {
+    await sendScheduledReplies();
+  } catch (error) {
+    console.error('[SEND-CYCLE] Error:', error.message);
+  } finally {
+    isSending = false;
+  }
+}
+
+// ─── Start/stop the polling engine (triple-loop v2.2) ───
 export function startPolling(intervalSec = 120) {
   if (pollTimer) clearInterval(pollTimer);
   if (backlogTimer) clearInterval(backlogTimer);
+  if (sendTimer) clearInterval(sendTimer);
 
   const backlogIntervalSec = 60; // Backlog checks every 60s (independent of fetch)
+  const sendIntervalSec = 30;    // v2.2: Send checks every 30s (independent of fetch+backlog)
 
-  console.log(`[ENGINE] Starting split-loop engine — fetch: ${intervalSec}s, backlog: ${backlogIntervalSec}s`);
-  logActivity(1, null, 'system', `Poll engine started — fetch: ${intervalSec}s, backlog: ${backlogIntervalSec}s (split-loop)`);
+  console.log(`[ENGINE] Starting triple-loop engine — fetch: ${intervalSec}s, backlog: ${backlogIntervalSec}s, send: ${sendIntervalSec}s`);
+  logActivity(1, null, 'system', `Poll engine started — fetch: ${intervalSec}s, backlog: ${backlogIntervalSec}s, send: ${sendIntervalSec}s (triple-loop v2.2)`);
 
-  // Start both loops immediately, then on their own intervals
+  // Start fetch loop immediately, then on interval
   fetchCycle();
   pollTimer = setInterval(fetchCycle, intervalSec * 1000);
 
@@ -424,6 +449,12 @@ export function startPolling(intervalSec = 120) {
     backlogCycle();
     backlogTimer = setInterval(backlogCycle, backlogIntervalSec * 1000);
   }, 5000);
+
+  // v2.2: Send loop starts after 10s — fully independent, guaranteed execution
+  setTimeout(() => {
+    sendCycle();
+    sendTimer = setInterval(sendCycle, sendIntervalSec * 1000);
+  }, 10000);
 }
 
 export function stopPolling() {
@@ -435,7 +466,11 @@ export function stopPolling() {
     clearInterval(backlogTimer);
     backlogTimer = null;
   }
-  console.log('[ENGINE] Poll engine stopped (both loops)');
+  if (sendTimer) {
+    clearInterval(sendTimer);
+    sendTimer = null;
+  }
+  console.log('[ENGINE] Poll engine stopped (all loops)');
   logActivity(1, null, 'system', 'Poll engine stopped');
 }
 
@@ -452,8 +487,9 @@ export async function triggerAccountPoll(accountId) {
 export function getEngineStatus() {
   return {
     running: !!pollTimer,
-    processing: isFetching || isBacklogging,
+    processing: isFetching || isBacklogging || isSending,
     fetching: isFetching,
     backlogging: isBacklogging,
+    sending: isSending,
   };
 }
