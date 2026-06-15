@@ -192,7 +192,7 @@ export async function sendReply(account, email, replyText, tenantId = 1) {
     subject = 'Re: ' + subject;
   }
 
-  const fromName = account.display_name || account.email.split('@')[0];
+  const fromName = account.display_name || account.persona_name || account.email.split('@')[0];
 
   // ─── Build quoted original message ───
   const origDate = email.received_at
