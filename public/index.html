@@ -348,7 +348,7 @@
             <div class="form-group">
               <label>Model</label>
               <select class="form-select" id="setAiModel">
-                <option value="deepseek/deepseek-v4-flash:free">DeepSeek V4 Flash (best, free)</option>
+                <option value="deepseek/deepseek-chat">DeepSeek V3 (best value — recommended)</option>
               </select>
             </div>
             <div class="form-group" id="baseUrlGroup" style="display:none">
@@ -1694,11 +1694,10 @@
 
       if (provider === 'openrouter') {
         modelSel.innerHTML = `
-          <option value="deepseek/deepseek-v4-flash:free">DeepSeek V4 Flash (best, free)</option>
-          <option value="nvidia/nemotron-3-super-120b-a12b:free">Nemotron 3 Super 120B (free)</option>
-          <option value="google/gemma-4-31b-it:free">Gemma 4 31B (free)</option>
-          <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (free)</option>
-          <option value="qwen/qwen3-next-80b-a3b-instruct:free">Qwen 3 Next 80B (free)</option>
+          <option value="deepseek/deepseek-chat">DeepSeek V3 (best value — recommended)</option>
+          <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3 (0324)</option>
+          <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
+          <option value="openai/gpt-4o-mini">GPT-4o Mini (highest quality)</option>
         `;
         baseUrlGroup.style.display = 'none';
         helpEl.innerHTML = 'Get key at <a href="https://openrouter.ai/settings/keys" target="_blank" style="color:var(--accent)">openrouter.ai/settings/keys</a>';
@@ -1729,7 +1728,7 @@
         document.getElementById('setAiProvider').value = s.ai_provider || 'openrouter';
         document.getElementById('setAiKey').value = s.ai_api_key || '';
         updateModelOptions();
-        document.getElementById('setAiModel').value = s.ai_model || 'deepseek/deepseek-v4-flash:free';
+        document.getElementById('setAiModel').value = s.ai_model || 'deepseek/deepseek-chat';
         document.getElementById('setAiBaseUrl').value = s.ai_base_url || '';
         document.getElementById('setPollInterval').value = s.poll_interval_sec || '120';
         document.getElementById('setMaxReplies').value = s.max_replies_per_sender || '1';

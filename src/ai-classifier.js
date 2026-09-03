@@ -15,10 +15,10 @@ const providerCache = new Map(); // tenantId → { type, apiKey, model, baseUrl 
 
 // ─── Fallback models for retry when primary model produces garbage ───
 const OPENROUTER_FALLBACK_MODELS = [
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'google/gemma-4-31b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'qwen/qwen3-next-80b-a3b-instruct:free',
+  'deepseek/deepseek-chat',
+  'deepseek/deepseek-chat-v3-0324',
+  'meta-llama/llama-3.3-70b-instruct',
+  'openai/gpt-4o-mini',
 ];
 
 // ─── Get AI provider config for a tenant (with master inheritance) ───
@@ -802,6 +802,16 @@ export async function generateReply(email, account, tenantId = 1) {
     }
 
     return text
+      // Convert markdown links [label](url) -> "label: url" (plain-text email safe).
+      // If label is a generic word (here/link/this/schedule/book), just show the URL.
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_m, label, url) => {
+        return /^(here|link|this|schedule|book|book now|click here|this link)$/i.test(label.trim())
+          ? url
+          : `${label} ${url}`;
+      })
+      // Strip any leftover markdown emphasis markers (**bold**, *italic*)
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/(?<!\*)\*(?!\*)([^*\n]+)\*(?!\*)/g, '$1')
       // Remove [Your Title], [Your Title Here], [Title], etc.
       .replace(/\n?\[Your Title(?:\s+Here)?\]/gi, '')
       .replace(/\n?\[Title\]/gi, '')
