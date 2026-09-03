@@ -860,6 +860,16 @@ app.get('/api/settings', resolveTenantAuth, (req, res) => {
 
   const aiConfig = resolveAIConfig(tenant);
 
+  // Domain research toggle (key-value settings table; default ON)
+  let domainResearchEnabled = true;
+  try {
+    const row = getTenantStmts(req.tenantId).getSetting.get(req.tenantId, 'domain_research_enabled');
+    if (row) {
+      const v = String(row.value).trim().toLowerCase();
+      domainResearchEnabled = !(v === 'false' || v === '0' || v === 'off' || v === 'no');
+    }
+  } catch {}
+
   res.json({
     // Tenant identity
     tenant_id: tenant.id,
@@ -887,6 +897,8 @@ app.get('/api/settings', resolveTenantAuth, (req, res) => {
     campaign_url_3: tenant.campaign_url_3,
     campaign_url_4: tenant.campaign_url_4,
     campaign_url_5: tenant.campaign_url_5,
+    // Domain research
+    domain_research_enabled: domainResearchEnabled,
   });
 });
 
@@ -917,6 +929,13 @@ app.put('/api/settings', resolveTenantAuth, (req, res) => {
       campaign_url_5: b.campaign_url_5 ?? tenant.campaign_url_5,
       notes: b.notes ?? tenant.notes,
     });
+
+    // Domain research toggle (stored in key-value settings table)
+    if (b.domain_research_enabled !== undefined) {
+      const val = (b.domain_research_enabled === true || b.domain_research_enabled === 'true' ||
+                   b.domain_research_enabled === 1 || b.domain_research_enabled === '1') ? 'true' : 'false';
+      getTenantStmts(req.tenantId).setSetting.run(req.tenantId, 'domain_research_enabled', val);
+    }
 
     resetAIClient(req.tenantId);
     logActivity(req.tenantId, null, 'settings', 'Settings updated', Object.keys(b).join(', '));
