@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { globalStmts, logActivity, getTenantAIConfig, getTenantCampaignUrls, getAccountCampaignUrls, getTenantStmts, tenantStmts } from './database.js';
+import { getDomainResearch } from './domain-research.js';
 
 // ─── Per-tenant AI provider cache ───
 const providerCache = new Map(); // tenantId → { type, apiKey, model, baseUrl }
@@ -616,6 +617,20 @@ function getTrainingExamples(tenantId) {
   }
 }
 
+// ─── Domain research toggle (per-tenant setting; default ON) ───
+// Disabled only if the setting 'domain_research_enabled' is explicitly false/0/off.
+function isDomainResearchEnabled(tenantId) {
+  try {
+    const tStmts = getTenantStmts(tenantId);
+    const row = tStmts.getSetting.get(tenantId, 'domain_research_enabled');
+    if (!row) return true; // default ON
+    const v = String(row.value).trim().toLowerCase();
+    return !(v === 'false' || v === '0' || v === 'off' || v === 'no');
+  } catch (e) {
+    return true; // never block replies on a settings read error
+  }
+}
+
 // ─── Extract the real first name from an email ───
 function extractFirstName(email) {
   const fromName = (email.from_name || '').trim();
@@ -734,11 +749,19 @@ export async function generateReply(email, account, tenantId = 1) {
   const campaignLink = getRandomCampaignUrl(tenantId, account.campaign_link, account.id);
   const trainingExamples = getTrainingExamples(tenantId);
 
+  // ─── Domain research: visit the sender's website to personalize the reply ───
+  // Best-effort. Returns null (→ normal reply) if disabled, free-email, or scrape fails.
+  let research = null;
+  if (isDomainResearchEnabled(tenantId)) {
+    research = await getDomainResearch(email.from_email, tenantId);
+  }
+
   console.log(`[REPLY] T${tenantId} Using campaign URL: ${campaignLink}`);
+  if (research) console.log(`[REPLY] T${tenantId} Personalizing with research on ${research.domain}${research.companyName ? ` (${research.companyName})` : ''}`);
   if (!rawFirstName) console.log(`[REPLY] T${tenantId} Could not extract first name for ${email.from_email} — using "there"`);
   if (trainingExamples) console.log(`[REPLY] T${tenantId} Including ${(trainingExamples.match(/--- Example/g)||[]).length} training example(s) in prompt`);
 
-  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples);
+  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples, research);
   const provider = getProvider(tenantId);
 
   // Post-generation cleanup: fix placeholders, strip AI thinking, trim whitespace
@@ -837,7 +860,19 @@ export async function generateReply(email, account, tenantId = 1) {
 }
 
 // ─── Build the reply generation prompt ───
-function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples) {
+function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples, research = null) {
+  // COMPANY RESEARCH block — only present when we successfully scraped the sender's site.
+  let researchBlock = '';
+  if (research && research.summary) {
+    const company = research.companyName || research.domain;
+    researchBlock = `
+COMPANY RESEARCH (about the SENDER's company — use this to personalize):
+- The sender appears to work at: ${company}
+- What their website says about them: ${research.summary}
+Use ONE short, natural sentence that references their company or what they do (e.g. "Thank you for reaching out about ${company}."). Do NOT list their services back to them, do NOT sound like you copied their website, and do NOT invent facts beyond what is given above.
+`;
+  }
+
   return `You are writing a reply to a business email. Write a professional, warm, human-sounding reply.
 
 CONTEXT:
@@ -845,7 +880,7 @@ CONTEXT:
 - The recipient's first name is "${firstName}"
 - You must naturally include this link in the reply: ${campaignLink}
 - The link is where the recipient can schedule a meeting and review our project requirements
-${trainingExamples || ''}
+${researchBlock}${trainingExamples || ''}
 
 INCOMING EMAIL:
 From: ${email.from_name} <${email.from_email}>
@@ -858,7 +893,7 @@ RULES:
 2. Keep it short (4-8 sentences max)
 3. Address them by first name ("Hi ${firstName},")
 4. Sound like a real person — not a template, not robotic
-5. Acknowledge what they said specifically (show you read their email)
+5. Acknowledge what they said specifically (show you read their email)${research && research.summary ? '\n5b. Naturally reference the sender\'s company using the COMPANY RESEARCH above — a single, genuine-sounding mention (do not dump their services back at them)' : ''}
 6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
 7. Sign off with EXACTLY "${personaName}"${personaTitle ? ` on the next line "${personaTitle}"` : ' — do NOT add any job title, company name, or position. Just the name, nothing else after it'}. Never write "[Your Title]" or any bracket placeholder. Never invent a title or company.
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)

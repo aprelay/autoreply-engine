@@ -14,6 +14,7 @@
 ### Core Engine
 - [x] **AI Email Classification** — 5-layer pipeline: rule-based → AI (DeepSeek) → fallback rules → positive-signal → default
 - [x] **AI Reply Generation** — Contextual replies with persona, campaign URL injection, and retry chain across 5 fallback models
+- [x] **Domain Research (v2.2)** — Before composing each reply, the engine visits the sender's website (homepage + a services/about page), distills what their company does, and injects it into the AI prompt so the reply references the sender's business (e.g. "Thank you for reaching out about Carlson Financial.") while still steering them to book via the campaign URL. Best-effort with caching and graceful fallback — see below.
 - [x] **IMAP Fetch** — Polls inboxes on configurable interval (default 120s) via ImapFlow
 - [x] **SMTP Send** — Sends replies via Nodemailer with TLS auto-detection (port 465 = implicit, 587 = STARTTLS)
 - [x] **Post-send IMAP** — Appends sent message to Sent folder + flags original as \Answered
@@ -63,6 +64,29 @@
 - [x] **Update URLs button** — Bulk URL replacement in approval queue drafts using rotated campaign links
 - [x] **Global Account Switcher** — Dropdown filters all panels by selected account
 - [x] **Auto Backlog Processing** — Orchestrator poll cycle now includes automatic pending email processing
+
+---
+
+## Domain Research — Personalized Replies (v2.2)
+
+For every reply, the engine researches the sender's company website and uses it to personalize the message before pushing them to book via the campaign URL.
+
+**Flow (inside `generateReply`):**
+1. Extract the sender's domain from their email (`liz@carlsonfinancial.com` → `carlsonfinancial.com`).
+2. If it's a free-email provider (gmail, outlook, yahoo, etc.) → skip and use the normal reply.
+3. Otherwise fetch the homepage + one services/about page, strip HTML → clean text, and build a short summary (company name + ≤1500 chars).
+4. Inject a `COMPANY RESEARCH` block into the AI prompt so the reply naturally references the sender's business, while still using "schedule" + "requirements" language and the campaign URL.
+5. If the site can't be reached / has no usable content → fall back to the normal reply (still asks them to book).
+
+**Caching:** Results are cached in a new `domain_cache` table (`domain`, `company_name`, `summary`, `status`, `fetched_at`) with a 30-day TTL. Repeat senders from the same domain are instant (~0ms) and don't re-scrape. Negative results (dead site) are also cached to avoid hammering.
+
+**Performance:** Cached = ~0ms · first-time normal site = ~1–3s · slow/dead site = capped at 8s (12s overall) then falls back.
+
+**Safety / non-breaking:** Implemented as a separate module (`src/domain-research.js`) with **no new npm dependencies** (uses built-in `fetch` + regex HTML stripping). The whole operation is wrapped in try/catch and hard timeouts — it can never crash a reply or stall the send loop. Worst case is identical to the pre-v2.2 behavior.
+
+**Toggle:** Per-tenant setting `domain_research_enabled` (default **on**). Set it to `false`/`0`/`off` in the `settings` table for a tenant to disable and revert that tenant to plain replies.
+
+**Files touched:** `src/domain-research.js` (new), `src/ai-classifier.js` (`generateReply` + `buildReplyPrompt` now accept/inject research; added `isDomainResearchEnabled`).
 
 ---
 
