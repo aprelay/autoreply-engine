@@ -14,6 +14,7 @@ import {
 import { fetchNewEmails, sendReply, testImapConnection, testSmtpConnection } from './email-engine.js';
 import { classifyEmail, generateReply, resetAIClient } from './ai-classifier.js';
 import { startPolling, stopPolling, triggerAccountPoll, getEngineStatus } from './orchestrator.js';
+import { clearDomainCache, getDomainResearch } from './domain-research.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -940,6 +941,54 @@ app.put('/api/settings', resolveTenantAuth, (req, res) => {
     resetAIClient(req.tenantId);
     logActivity(req.tenantId, null, 'settings', 'Settings updated', Object.keys(b).join(', '));
     res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════
+// DOMAIN RESEARCH — cache mgmt + live preview
+// ═══════════════════════════════════════════
+
+// Clear cached research so the next reply re-scrapes. Body: { domain? }
+// No domain → clears the whole cache.
+app.post('/api/domain-research/clear', resolveTenantAuth, (req, res) => {
+  try {
+    const domain = (req.body?.domain || '').trim().toLowerCase() || null;
+    const removed = clearDomainCache(domain);
+    logActivity(req.tenantId, null, 'settings',
+      domain ? `Cleared domain research cache for ${domain}` : 'Cleared ALL domain research cache',
+      `${removed} row(s)`);
+    res.json({ success: true, removed, domain: domain || 'ALL' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Live-test what research the engine would gather for a given email/domain.
+// Body: { email }  (or { domain })  → forces a fresh scrape (bypasses cache).
+app.post('/api/domain-research/test', resolveTenantAuth, async (req, res) => {
+  try {
+    const email = (req.body?.email || '').trim();
+    const domain = (req.body?.domain || '').trim().toLowerCase();
+    const target = email || (domain ? `test@${domain}` : '');
+    if (!target) return res.status(400).json({ error: 'Provide an email or domain' });
+    // Bypass cache for an honest live test
+    clearDomainCache(domain || undefined);
+    const research = await getDomainResearch(target, req.tenantId);
+    if (!research) {
+      return res.json({
+        success: true, found: false,
+        message: 'No usable website content found (site unreachable, free-email provider, or empty). Reply will use the normal fallback.',
+      });
+    }
+    res.json({
+      success: true, found: true,
+      domain: research.domain,
+      company_name: research.companyName,
+      summary: research.summary,
+      summary_length: research.summary?.length || 0,
+    });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

@@ -14,9 +14,11 @@
 import { db, logActivity } from './database.js';
 
 // ─── Config ───
-const CACHE_TTL_DAYS = 30;          // Re-scrape a domain at most once per 30 days
-const FETCH_TIMEOUT_MS = 8000;      // Per-page fetch hard cap
-const OVERALL_TIMEOUT_MS = 12000;   // Whole research op hard cap
+const CACHE_TTL_DAYS = 30;          // Re-use a SUCCESSFUL scrape for up to 30 days
+const NEG_CACHE_TTL_HOURS = 6;      // Re-try a FAILED domain after only 6h (avoids a
+                                    //   single transient timeout poisoning a domain for a month)
+const FETCH_TIMEOUT_MS = 12000;     // Per-page fetch hard cap (some marketing sites are slow/heavy)
+const OVERALL_TIMEOUT_MS = 20000;   // Whole research op hard cap
 const MAX_SUMMARY_CHARS = 1500;     // Cap injected into AI prompt
 const MAX_SERVICE_PAGES = 1;        // How many extra (services/about) pages to fetch
 const USER_AGENT =
@@ -56,7 +58,36 @@ const cacheStmts = {
       status = excluded.status,
       fetched_at = excluded.fetched_at
   `),
+  deleteOne: db.prepare('DELETE FROM domain_cache WHERE domain = ?'),
+  purgeNegatives: db.prepare(
+    "DELETE FROM domain_cache WHERE status != 'ok' OR summary = ''"
+  ),
+  clearAll: db.prepare('DELETE FROM domain_cache'),
 };
+
+// On boot, drop any lingering negative rows. Historically a single transient
+// failure (slow site, or the Sept AI-outage window) cached 'error'/'empty' for
+// 30 days and blocked personalization for that sender ever since. Purging on
+// start guarantees every domain gets a fresh attempt after a redeploy.
+try {
+  const purged = cacheStmts.purgeNegatives.run();
+  if (purged.changes > 0) {
+    console.log(`[RESEARCH] Purged ${purged.changes} stale negative domain_cache row(s) on boot`);
+  }
+} catch (e) {
+  console.warn(`[RESEARCH] negative-cache purge failed: ${e.message}`);
+}
+
+// Exported so an admin endpoint can force a re-scrape.
+export function clearDomainCache(domain) {
+  try {
+    if (domain) return cacheStmts.deleteOne.run(domain).changes;
+    return cacheStmts.clearAll.run().changes;
+  } catch (e) {
+    console.warn(`[RESEARCH] clearDomainCache failed: ${e.message}`);
+    return 0;
+  }
+}
 
 // ─── Extract domain from an email address ───
 export function extractDomain(fromEmail) {
@@ -219,12 +250,20 @@ async function scrapeDomain(domain) {
   return { status: 'ok', company_name: companyName, summary };
 }
 
+// Fresh window depends on outcome:
+//   • successful ('ok' + summary) results are trusted for CACHE_TTL_DAYS
+//   • negative results (error/empty) expire after only NEG_CACHE_TTL_HOURS so a
+//     transient failure doesn't block a domain for the full 30 days.
 function isCacheFresh(row) {
   if (!row) return false;
   const fetched = new Date((row.fetched_at || '').replace(' ', 'T') + 'Z').getTime();
   if (!fetched) return false;
-  const ageDays = (Date.now() - fetched) / (1000 * 60 * 60 * 24);
-  return ageDays < CACHE_TTL_DAYS;
+  const ageMs = Date.now() - fetched;
+  const isPositive = row.status === 'ok' && row.summary;
+  const maxMs = isPositive
+    ? CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
+    : NEG_CACHE_TTL_HOURS * 60 * 60 * 1000;
+  return ageMs < maxMs;
 }
 
 // ═══════════════════════════════════════════════════════════════
