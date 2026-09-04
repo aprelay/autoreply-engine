@@ -71,12 +71,13 @@
 
 For every reply, the engine researches the sender's company website and uses it to personalize the message before pushing them to book via the campaign URL.
 
-**Flow (inside `generateReply`):**
-1. Extract the sender's domain from their email (`liz@carlsonfinancial.com` → `carlsonfinancial.com`).
-2. If it's a free-email provider (gmail, outlook, yahoo, etc.) → skip and use the normal reply.
-3. Otherwise fetch the homepage + one services/about page, strip HTML → clean text, and build a short summary (company name + ≤1500 chars).
-4. Inject a `COMPANY RESEARCH` block into the AI prompt so the reply naturally references the sender's business, while still using "schedule" + "requirements" language and the campaign URL.
-5. If the site can't be reached / has no usable content → fall back to the normal reply (still asks them to book).
+**Flow (inside `generateReply` → `getDomainResearchForEmail`):**
+1. Try the sender's own domain (`liz@carlsonfinancial.com` → `carlsonfinancial.com`).
+2. **"Real company" signature override (v2.5):** if the sender's domain is a **mail relay** (e.g. `offsitehr.com`, sendgrid, apollo.io, outreach), a **free-email** provider, or yields nothing, mine the email **signature/body** for the real company domain and research that instead. Candidates are ranked: email addresses in the signature (strong) > explicit http links (medium) > bare `www.` mentions (weak); social / calendar / link-shortener hosts are ignored. Up to 3 candidates are tried. Example: `bear@offsitehr.com` whose signature is *"95 Percent Group | gkesler@95percentgroup.com"* → research resolves **95 Percent Group**.
+3. Fetch the homepage + one services/about page, strip HTML → clean text, build a short summary (real company name + ≤1500 chars). Company name prefers `og:site_name` / the `<title>` segment matching the domain, so a **slogan** never wins (fixes `jjjconstructioninc.com` showing "Residential Renovation Experts" instead of "JJJ Construction Inc.").
+4. Inject a `COMPANY RESEARCH` block into the AI prompt. The reply is written **as the interested client**: it names the specific service the sender offers, expresses interest in engaging them for it, and steers to a meeting to **review requirements** via the campaign URL.
+5. **Challenge-page rejection (v2.5):** WAF/bot interstitials returned as HTTP 200 ("Client Challenge", "Just a moment", "Attention Required", …) and summaries <80 chars are rejected so they can't masquerade as real research.
+6. If nothing usable is found anywhere → fall back to the normal reply (still asks them to book).
 
 **Caching (v2.3 — split TTL):** Results are cached in a `domain_cache` table (`domain`, `company_name`, `summary`, `status`, `fetched_at`). **Successful** scrapes are trusted for **30 days**; **negative** results (unreachable/empty) expire after only **6 hours** so a single transient failure no longer poisons a sender for a month. Lingering negative rows are also **purged on boot**. Repeat senders from the same domain are instant (~0ms).
 
@@ -84,8 +85,8 @@ For every reply, the engine researches the sender's company website and uses it 
 
 **Known limitation — WAF / bot blocks:** Some company sites sit behind Cloudflare/Akamai WAFs that **block requests from datacenter IPs** (Railway's servers). Those sites return HTTP 403/503 to any server-side `fetch` and cannot be scraped without a headless browser — the reply falls back to the normal (still books-a-meeting) message. Example: `carlsonfinancial.com` returns 403 to Railway. This is a hosting/IP limitation, not a code bug.
 
-**Diagnostics & cache tools (v2.3):**
-- `POST /api/domain-research/test` `{ "email": "..." }` — live, cache-bypassing preview of what research the engine would gather; returns `found`, `company_name`, `summary`, and a `reason` string on failure (e.g. `HTTP 403 (likely bot/WAF block on server IP)`, `timeout after 12000ms`).
+**Diagnostics & cache tools:**
+- `POST /api/domain-research/test` — live, cache-bypassing preview of what research the engine would gather (**including the signature override**). Accepts `{ "email_id": 33455 }` (loads a real stored inbox message with its signature), `{ "email": "...", "body": "...signature..." }`, or `{ "email"|"domain": "..." }`. Returns `found`, `source` (`sender_domain` | `signature`), `company_name`, `summary`, plus `signature_domains_tried` / `reason` on failure (e.g. `HTTP 403 (likely bot/WAF block on server IP)`, `bot/WAF challenge page`, `timeout after 12000ms`).
 - `POST /api/domain-research/clear` `{ "domain": "..." }` (omit `domain` to clear ALL) — wipe cached research so the next reply re-scrapes.
 
 **Safety / non-breaking:** Separate module (`src/domain-research.js`), **no new npm dependencies** (built-in `fetch` + regex HTML stripping). Wrapped in try/catch and hard timeouts — can never crash a reply or stall the send loop.
