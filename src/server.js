@@ -14,7 +14,7 @@ import {
 import { fetchNewEmails, sendReply, testImapConnection, testSmtpConnection } from './email-engine.js';
 import { classifyEmail, generateReply, resetAIClient } from './ai-classifier.js';
 import { startPolling, stopPolling, triggerAccountPoll, getEngineStatus } from './orchestrator.js';
-import { clearDomainCache, getDomainResearch } from './domain-research.js';
+import { clearDomainCache, getDomainResearch, getLastFetchError } from './domain-research.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -977,9 +977,11 @@ app.post('/api/domain-research/test', resolveTenantAuth, async (req, res) => {
     clearDomainCache(domain || undefined);
     const research = await getDomainResearch(target, req.tenantId);
     if (!research) {
+      const reason = getLastFetchError();
       return res.json({
         success: true, found: false,
-        message: 'No usable website content found (site unreachable, free-email provider, or empty). Reply will use the normal fallback.',
+        reason: reason || 'free-email provider or no content',
+        message: `No usable website content found${reason ? ` (${reason})` : ''}. Reply will use the normal fallback.`,
       });
     }
     res.json({

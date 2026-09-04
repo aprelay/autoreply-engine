@@ -107,7 +107,15 @@ export function isFreeEmailDomain(domain) {
   return !!domain && FREE_EMAIL_DOMAINS.has(domain);
 }
 
-// ─── Fetch a URL with timeout + browser-like headers ───
+// Records the reason the most recent scrape failed (surfaced by the /test endpoint
+// so failures like Cloudflare bot-blocks on datacenter IPs are diagnosable).
+let lastFetchError = '';
+
+// ─── Fetch a URL with timeout + full browser-like headers ───
+// The complete header set (Sec-Fetch-*, Accept-Encoding, Upgrade-Insecure-Requests)
+// passes Cloudflare's lightweight "managed challenge" for many sites that only block
+// obviously-scripted requests. It cannot beat a full JS interstitial — those sites
+// (and any WAF that blocklists cloud/datacenter IPs) simply aren't scrapable server-side.
 async function fetchWithTimeout(url, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -117,19 +125,39 @@ async function fetchWithTimeout(url, timeoutMs = FETCH_TIMEOUT_MS) {
       signal: controller.signal,
       headers: {
         'User-Agent': USER_AGENT,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Sec-Ch-Ua': '"Chromium";v="120", "Not(A:Brand";v="24", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
       },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      lastFetchError = `HTTP ${res.status}${res.status === 403 || res.status === 503 ? ' (likely bot/WAF block on server IP)' : ''}`;
+      return null;
+    }
     const ct = (res.headers.get('content-type') || '').toLowerCase();
-    if (!ct.includes('html') && ct !== '') return null;
+    if (!ct.includes('html') && ct !== '') {
+      lastFetchError = `non-HTML content-type: ${ct}`;
+      return null;
+    }
     return await res.text();
-  } catch {
+  } catch (e) {
+    lastFetchError = e?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (e?.message || 'network error');
     return null; // timeout, DNS failure, TLS error, etc.
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function getLastFetchError() {
+  return lastFetchError;
 }
 
 // ─── HTML → clean text (no dependencies) ───
@@ -208,6 +236,7 @@ function findServiceLink(html, baseUrl) {
 
 // ─── Core: fetch + distill a domain's site into a short summary ───
 async function scrapeDomain(domain) {
+  lastFetchError = '';
   const roots = [`https://${domain}`, `https://www.${domain}`, `http://${domain}`];
   let html = null;
   let baseUrl = null;
@@ -216,7 +245,7 @@ async function scrapeDomain(domain) {
     html = await fetchWithTimeout(root);
     if (html) { baseUrl = root; break; }
   }
-  if (!html) return { status: 'error', company_name: '', summary: '' };
+  if (!html) return { status: 'error', company_name: '', summary: '', error: lastFetchError || 'unreachable' };
 
   const title = extractTitle(html);
   const metaDesc = extractMetaDescription(html);
