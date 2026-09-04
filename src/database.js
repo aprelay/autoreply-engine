@@ -261,6 +261,9 @@ db.exec(`
   addColIfMissing('accounts', 'campaign_url_3', "TEXT NOT NULL DEFAULT ''");
   addColIfMissing('accounts', 'campaign_url_4', "TEXT NOT NULL DEFAULT ''");
   addColIfMissing('accounts', 'campaign_url_5', "TEXT NOT NULL DEFAULT ''");
+  // Persona signature fields: company name + address (shown in reply sign-off)
+  addColIfMissing('accounts', 'persona_company', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('accounts', 'persona_address', "TEXT NOT NULL DEFAULT ''");
 }
 
 // ═══════════════════════════════════════════
@@ -347,10 +350,10 @@ function getTenantStmts(tenantId) {
     getActiveAccounts: db.prepare("SELECT * FROM accounts WHERE tenant_id = ? AND is_active = 1 AND mode != 'paused'"),
     insertAccount: db.prepare(`
       INSERT INTO accounts (tenant_id, email, display_name, imap_host, imap_port, smtp_host, smtp_port, password,
-        campaign_name, campaign_link, persona_name, persona_title, reply_style, mode, min_delay_sec, max_delay_sec,
+        campaign_name, campaign_link, persona_name, persona_title, persona_company, persona_address, reply_style, mode, min_delay_sec, max_delay_sec,
         campaign_url_1, campaign_url_2, campaign_url_3, campaign_url_4, campaign_url_5)
       VALUES (?, @email, @display_name, @imap_host, @imap_port, @smtp_host, @smtp_port, @password,
-        @campaign_name, @campaign_link, @persona_name, @persona_title, @reply_style, @mode, @min_delay_sec, @max_delay_sec,
+        @campaign_name, @campaign_link, @persona_name, @persona_title, @persona_company, @persona_address, @reply_style, @mode, @min_delay_sec, @max_delay_sec,
         @campaign_url_1, @campaign_url_2, @campaign_url_3, @campaign_url_4, @campaign_url_5)
     `),
     updateAccount: db.prepare(`
@@ -359,6 +362,7 @@ function getTenantStmts(tenantId) {
         smtp_host=@smtp_host, smtp_port=@smtp_port, password=@password,
         campaign_name=@campaign_name, campaign_link=@campaign_link,
         persona_name=@persona_name, persona_title=@persona_title,
+        persona_company=@persona_company, persona_address=@persona_address,
         reply_style=@reply_style, mode=@mode,
         min_delay_sec=@min_delay_sec, max_delay_sec=@max_delay_sec,
         campaign_url_1=@campaign_url_1, campaign_url_2=@campaign_url_2, campaign_url_3=@campaign_url_3,

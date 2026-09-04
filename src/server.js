@@ -260,7 +260,7 @@ app.get('/api/accounts/:id', resolveTenantAuth, (req, res) => {
 app.post('/api/accounts', resolveTenantAuth, (req, res) => {
   try {
     const { email, password, display_name, imap_host, imap_port, smtp_host, smtp_port,
-      campaign_name, campaign_link, persona_name, persona_title, reply_style,
+      campaign_name, campaign_link, persona_name, persona_title, persona_company, persona_address, reply_style,
       mode, min_delay_sec, max_delay_sec,
       campaign_url_1, campaign_url_2, campaign_url_3, campaign_url_4, campaign_url_5 } = req.body;
 
@@ -279,6 +279,8 @@ app.post('/api/accounts', resolveTenantAuth, (req, res) => {
       campaign_link: campaign_link || '',
       persona_name: persona_name || '',
       persona_title: persona_title || '',
+      persona_company: persona_company || '',
+      persona_address: persona_address || '',
       reply_style: reply_style || 'professional',
       mode: mode || 'approval',
       min_delay_sec: min_delay_sec || 180,
@@ -316,6 +318,8 @@ app.put('/api/accounts/:id', resolveTenantAuth, (req, res) => {
       campaign_link: b.campaign_link ?? existing.campaign_link,
       persona_name: b.persona_name ?? existing.persona_name,
       persona_title: b.persona_title ?? existing.persona_title,
+      persona_company: b.persona_company ?? existing.persona_company ?? '',
+      persona_address: b.persona_address ?? existing.persona_address ?? '',
       reply_style: b.reply_style ?? existing.reply_style,
       mode: b.mode ?? existing.mode,
       min_delay_sec: b.min_delay_sec ?? existing.min_delay_sec,

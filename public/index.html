@@ -489,6 +489,14 @@
             <input class="form-input" id="accPersonaTitle" placeholder="Estimator">
           </div>
           <div class="form-group">
+            <label>Company Name (sign-off)</label>
+            <input class="form-input" id="accPersonaCompany" placeholder="JJJ Construction Inc.">
+          </div>
+          <div class="form-group" style="grid-column:1 / -1">
+            <label>Address (sign-off)</label>
+            <input class="form-input" id="accPersonaAddress" placeholder="123 Main St, Suite 100, Dallas, TX 75201">
+          </div>
+          <div class="form-group">
             <label>Min Delay (seconds)</label>
             <input class="form-input" id="accMinDelay" type="number" value="180">
           </div>
@@ -1187,6 +1195,8 @@
       document.getElementById('accMode').value = 'approval';
       document.getElementById('accPersonaName').value = '';
       document.getElementById('accPersonaTitle').value = '';
+      document.getElementById('accPersonaCompany').value = '';
+      document.getElementById('accPersonaAddress').value = '';
       document.getElementById('accMinDelay').value = '180';
       document.getElementById('accMaxDelay').value = '1800';
       document.getElementById('testResult').innerHTML = '';
@@ -1209,6 +1219,8 @@
         document.getElementById('accMode').value = a.mode;
         document.getElementById('accPersonaName').value = a.persona_name;
         document.getElementById('accPersonaTitle').value = a.persona_title;
+        document.getElementById('accPersonaCompany').value = a.persona_company || '';
+        document.getElementById('accPersonaAddress').value = a.persona_address || '';
         document.getElementById('accMinDelay').value = a.min_delay_sec;
         document.getElementById('accMaxDelay').value = a.max_delay_sec;
         document.getElementById('testResult').innerHTML = '';
@@ -1229,6 +1241,8 @@
         mode: document.getElementById('accMode').value,
         persona_name: document.getElementById('accPersonaName').value.trim(),
         persona_title: document.getElementById('accPersonaTitle').value.trim(),
+        persona_company: document.getElementById('accPersonaCompany').value.trim(),
+        persona_address: document.getElementById('accPersonaAddress').value.trim(),
         min_delay_sec: parseInt(document.getElementById('accMinDelay').value),
         max_delay_sec: parseInt(document.getElementById('accMaxDelay').value),
       };

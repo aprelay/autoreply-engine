@@ -746,6 +746,8 @@ export async function generateReply(email, account, tenantId = 1) {
   const firstName = rawFirstName || 'there'; // Fallback: "Hi there," instead of "Hi ,"
   const personaName = account.display_name || account.persona_name || account.email.split('@')[0];
   const personaTitle = account.persona_title || '';
+  const personaCompany = account.persona_company || '';
+  const personaAddress = account.persona_address || '';
   const campaignLink = getRandomCampaignUrl(tenantId, account.campaign_link, account.id);
   const trainingExamples = getTrainingExamples(tenantId);
 
@@ -764,7 +766,7 @@ export async function generateReply(email, account, tenantId = 1) {
   if (!rawFirstName) console.log(`[REPLY] T${tenantId} Could not extract first name for ${email.from_email} — using "there"`);
   if (trainingExamples) console.log(`[REPLY] T${tenantId} Including ${(trainingExamples.match(/--- Example/g)||[]).length} training example(s) in prompt`);
 
-  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples, research);
+  const prompt = buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples, research, personaCompany, personaAddress);
   const provider = getProvider(tenantId);
 
   // Post-generation cleanup: fix placeholders, strip AI thinking, trim whitespace
@@ -827,6 +829,9 @@ export async function generateReply(email, account, tenantId = 1) {
       .replace(/\n?\[Your Title(?:\s+Here)?\]/gi, '')
       .replace(/\n?\[Title\]/gi, '')
       .replace(/\n?\[Your Position\]/gi, '')
+      // Remove [Company], [Company Name], [Your Company], [Address], etc. placeholders
+      .replace(/\n?\[(?:Your\s+)?Company(?:\s+Name)?\]/gi, '')
+      .replace(/\n?\[(?:Your\s+)?Address\]/gi, '')
       // Remove duplicate blank lines left by placeholder removal
       .replace(/\n{3,}/g, '\n\n')
       .trim();
@@ -877,11 +882,22 @@ export async function generateReply(email, account, tenantId = 1) {
   console.warn(`[REPLY] T${tenantId} All AI failed for ${email.from_email} — using template fallback`);
   logActivity(tenantId, null, 'warning', `AI reply quality failed for ${email.from_email} — used template`,
     `Last rejection: ${validation.reason}`);
-  return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email, tenantId, account.id);
+  return buildTemplateReply(firstName, personaName, personaTitle, campaignLink, email, tenantId, account.id, personaCompany, personaAddress);
 }
 
 // ─── Build the reply generation prompt ───
-function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples, research = null) {
+function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignLink, trainingExamples, research = null, personaCompany = '', personaAddress = '') {
+  // Build the EXACT multi-line sign-off block the AI must reproduce:
+  //   Name
+  //   Title        (if provided)
+  //   Company Name (if provided)
+  //   Address      (if provided)
+  const signoffLines = [personaName];
+  if (personaTitle) signoffLines.push(personaTitle);
+  if (personaCompany) signoffLines.push(personaCompany);
+  if (personaAddress) signoffLines.push(personaAddress);
+  const signoffBlock = signoffLines.join('\n');
+  const hasExtraSignoff = personaTitle || personaCompany || personaAddress;
   // COMPANY RESEARCH block — only present when we successfully scraped the sender's site.
   let researchBlock = '';
   if (research && research.summary) {
@@ -904,7 +920,7 @@ HOW TO USE THIS RESEARCH:
   return `You are writing a reply to a business email. Write a professional, warm, human-sounding reply.
 
 CONTEXT:
-- You are "${personaName}"${personaTitle ? `, ${personaTitle}` : ''}
+- You are "${personaName}"${personaTitle ? `, ${personaTitle}` : ''}${personaCompany ? ` at ${personaCompany}` : ''}
 - The recipient's first name is "${firstName}"
 - You must naturally include this link in the reply: ${campaignLink}
 - The link is where the recipient can schedule a meeting AND review our project requirements
@@ -925,7 +941,9 @@ RULES:
 5. Acknowledge what they said specifically (show you read their email)${research && research.summary ? `\n5b. Using the COMPANY RESEARCH, name the SPECIFIC service ${research.companyName || 'their company'} offers that you are interested in, and express that you'd like to engage them for it (you are the interested client). Reference their company by its REAL name only — never a slogan.` : ''}
 6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
 6b. Mention the "Skip" option in ONE light, natural sentence, and phrase it DIFFERENTLY every time — never reuse the same wording twice. Rework it in your own words so it never sounds like a canned/template line. The idea to convey (vary the exact words): if they'd rather look over the requirements before booking, they can use "Skip" on that page to view them first. Vary the verb and structure naturally, e.g. "prefer to see the requirements first — just Skip past the calendar", "no rush to book; select Skip to review the requirements first", "if you'd like the details before scheduling, Skip straight to them on the next page", "feel free to hit Skip if you want to read through the requirements before picking a time". NEVER use the word "click" (spam trigger) — use "select Skip" / "choose Skip" / "hit Skip" / "just Skip" / "Skip past". Keep it to one sentence, do not over-explain.
-7. Sign off with EXACTLY "${personaName}"${personaTitle ? ` on the next line "${personaTitle}"` : ' — do NOT add any job title, company name, or position. Just the name, nothing else after it'}. Never write "[Your Title]" or any bracket placeholder. Never invent a title or company.
+7. Sign off with EXACTLY this signature block, each item on its OWN line, in this exact order and nothing else after it:
+${signoffBlock}
+${hasExtraSignoff ? 'Reproduce every line above EXACTLY as written (do not merge, reorder, abbreviate, or add lines). Never write "[Your Title]", "[Company]", "[Address]" or any bracket placeholder. Never invent or change the title, company name, or address — use only the lines given above.' : 'Just the name, nothing else after it. Do NOT add any job title, company name, address, or position. Never write "[Your Title]" or any bracket placeholder. Never invent a title, company, or address.'}
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
 9. Do NOT use exclamation marks excessively
 10. Do NOT say "I hope this email finds you well" or similar cliches
@@ -1033,9 +1051,9 @@ function detectIntent(email) {
 }
 
 // ─── Smart Template Reply (tenant-aware, account-aware) ───
-function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUnused, email, tenantId = 1, accountId = null) {
+function buildTemplateReply(firstName, personaName, personaTitle, campaignLinkUnused, email, tenantId = 1, accountId = null, personaCompany = '', personaAddress = '') {
   const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
-  const signoff = personaTitle ? `${personaName}\n${personaTitle}` : personaName;
+  const signoff = [personaName, personaTitle, personaCompany, personaAddress].filter(Boolean).join('\n');
   const link = getRandomCampaignUrl(tenantId, campaignLinkUnused, accountId);
 
   const { intent, score } = detectIntent(email);
