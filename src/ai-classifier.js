@@ -899,7 +899,8 @@ CONTEXT:
 - You are "${personaName}"${personaTitle ? `, ${personaTitle}` : ''}
 - The recipient's first name is "${firstName}"
 - You must naturally include this link in the reply: ${campaignLink}
-- The link is where the recipient can schedule a meeting and review our project requirements
+- The link is where the recipient can schedule a meeting AND review our project requirements
+- IMPORTANT: On that page there is a "Skip" button. If they would rather review the requirements FIRST (before booking), they can click "Skip" to go straight to the requirements on the next page. Give them BOTH options: book a time now, or click Skip to review the requirements first.
 ${researchBlock}${trainingExamples || ''}
 
 INCOMING EMAIL:
@@ -915,6 +916,7 @@ RULES:
 4. Sound like a real person — not a template, not robotic
 5. Acknowledge what they said specifically (show you read their email)${research && research.summary ? `\n5b. Using the COMPANY RESEARCH, name the SPECIFIC service ${research.companyName || 'their company'} offers that you are interested in, and express that you'd like to engage them for it (you are the interested client). Reference their company by its REAL name only — never a slogan.` : ''}
 6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
+6b. Also mention the "Skip" option in one natural sentence: tell them if they'd prefer to review the requirements first before booking, they can just click "Skip" on that page to see them on the next page. Keep it light and optional — one sentence, do not over-explain.
 7. Sign off with EXACTLY "${personaName}"${personaTitle ? ` on the next line "${personaTitle}"` : ' — do NOT add any job title, company name, or position. Just the name, nothing else after it'}. Never write "[Your Title]" or any bracket placeholder. Never invent a title or company.
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
 9. Do NOT use exclamation marks excessively
