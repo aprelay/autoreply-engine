@@ -204,6 +204,73 @@ function extractMetaDescription(html) {
   return '';
 }
 
+// The most reliable source of the ACTUAL business name is og:site_name /
+// application-name — publishers set these to the brand, not a slogan.
+function extractSiteName(html) {
+  const patterns = [
+    /<meta[^>]+property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:site_name["']/i,
+    /<meta[^>]+name=["']application-name["'][^>]*content=["']([^"']+)["']/i,
+  ];
+  for (const p of patterns) {
+    const m = html.match(p);
+    if (m) {
+      const v = htmlToText(m[1]).trim();
+      if (v) return v.slice(0, 60);
+    }
+  }
+  return '';
+}
+
+// Turn a domain into a human-ish fallback name: jjjconstructioninc.com → "Jjjconstructioninc".
+// Weak, but better than a slogan when nothing else is available.
+function nameFromDomain(domain) {
+  if (!domain) return '';
+  const base = domain.split('.')[0].replace(/[-_]/g, ' ').trim();
+  if (!base) return '';
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+// Pick the best company name from the available signals.
+// Priority: og:site_name → the <title> segment that best matches the domain →
+// first title segment → domain-derived. This fixes cases where the homepage
+// <title> leads with a slogan (e.g. "Residential Renovation Experts | JJJ Construction Inc").
+function pickCompanyName(html, title, domain) {
+  const siteName = extractSiteName(html);
+  if (siteName) return siteName;
+
+  const clean = (s) => (s || '')
+    .replace(/\b(home|homepage|welcome to|official site|official website)\b/gi, '')
+    .trim();
+
+  const segments = (title || '')
+    .split(/[|\-–—:•·]/)
+    .map((s) => clean(s))
+    .filter(Boolean);
+
+  if (segments.length > 1) {
+    // Compare each segment to the domain's core token (letters only, lowercased).
+    const domainCore = (domain || '').split('.')[0].replace(/[^a-z0-9]/gi, '').toLowerCase();
+    let best = null, bestScore = 0;
+    for (const seg of segments) {
+      const segCore = seg.replace(/[^a-z0-9]/gi, '').toLowerCase();
+      if (!segCore) continue;
+      // Score: how much of the domain token is contained in the segment (or vice-versa)
+      let score = 0;
+      if (domainCore && (segCore.includes(domainCore) || domainCore.includes(segCore))) {
+        score = Math.min(segCore.length, domainCore.length) / Math.max(segCore.length, domainCore.length);
+      }
+      if (score > bestScore) { bestScore = score; best = seg; }
+    }
+    // Require a reasonable overlap before trusting the domain match
+    if (best && bestScore >= 0.5) return best.slice(0, 60);
+  }
+
+  // No confident title match → first non-empty title segment, else domain-derived
+  if (segments.length) return segments[0].slice(0, 60);
+  return nameFromDomain(domain);
+}
+
 // ─── Find a services/about-type internal link on the homepage ───
 function findServiceLink(html, baseUrl) {
   const KEYWORDS = [
@@ -261,11 +328,9 @@ async function scrapeDomain(domain) {
     }
   }
 
-  // Company name guess: title minus common suffixes / taglines
-  let companyName = title
-    .split(/[|\-–—:]/)[0]
-    .replace(/\b(home|homepage|welcome to|official site|official website)\b/gi, '')
-    .trim();
+  // Company name: prefer og:site_name / the title segment matching the domain,
+  // so we don't pick up a slogan (e.g. "Residential Renovation Experts").
+  let companyName = pickCompanyName(html, title, domain);
   if (companyName.length > 60) companyName = companyName.slice(0, 60).trim();
 
   // Assemble a compact summary the AI can use

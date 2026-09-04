@@ -876,10 +876,17 @@ function buildReplyPrompt(email, firstName, personaName, personaTitle, campaignL
   if (research && research.summary) {
     const company = research.companyName || research.domain;
     researchBlock = `
-COMPANY RESEARCH (about the SENDER's company — use this to personalize):
-- The sender appears to work at: ${company}
-- What their website says about them: ${research.summary}
-Use ONE short, natural sentence that references their company or what they do (e.g. "Thank you for reaching out about ${company}."). Do NOT list their services back to them, do NOT sound like you copied their website, and do NOT invent facts beyond what is given above.
+COMPANY RESEARCH (about the SENDER's company — read this and USE it):
+- The sender's company is: ${company}
+- What their website says they offer: ${research.summary}
+
+HOW TO USE THIS RESEARCH:
+- You are the potential CLIENT reaching out because you are interested in what ${company} offers.
+- From the research above, identify the SPECIFIC service or offering ${company} provides that is relevant, and mention it naturally by name.
+- Express genuine interest in engaging them for that service — the tone is "we're looking for this and would like to talk", NOT "here is what we sell".
+- Then steer them to book a meeting so you can go over your requirements together.
+- Use the company's REAL name ("${company}") exactly — do not use a slogan or tagline as if it were the company name.
+- Do NOT copy sentences from their website verbatim, do NOT list all their services, and do NOT invent facts beyond what is given above.
 `;
   }
 
@@ -903,7 +910,7 @@ RULES:
 2. Keep it short (4-8 sentences max)
 3. Address them by first name ("Hi ${firstName},")
 4. Sound like a real person — not a template, not robotic
-5. Acknowledge what they said specifically (show you read their email)${research && research.summary ? '\n5b. Naturally reference the sender\'s company using the COMPANY RESEARCH above — a single, genuine-sounding mention (do not dump their services back at them)' : ''}
+5. Acknowledge what they said specifically (show you read their email)${research && research.summary ? `\n5b. Using the COMPANY RESEARCH, name the SPECIFIC service ${research.companyName || 'their company'} offers that you are interested in, and express that you'd like to engage them for it (you are the interested client). Reference their company by its REAL name only — never a slogan.` : ''}
 6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
 7. Sign off with EXACTLY "${personaName}"${personaTitle ? ` on the next line "${personaTitle}"` : ' — do NOT add any job title, company name, or position. Just the name, nothing else after it'}. Never write "[Your Title]" or any bracket placeholder. Never invent a title or company.
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
