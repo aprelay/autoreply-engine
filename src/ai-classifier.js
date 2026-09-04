@@ -815,6 +815,14 @@ export async function generateReply(email, account, tenantId = 1) {
       // Strip any leftover markdown emphasis markers (**bold**, *italic*)
       .replace(/\*\*([^*]+)\*\*/g, '$1')
       .replace(/(?<!\*)\*(?!\*)([^*\n]+)\*(?!\*)/g, '$1')
+      // Safety net: remove the spam-trigger word "click" if the model slips it in.
+      // "click Skip"/"click on Skip"/"click the Skip button" -> "select Skip"
+      .replace(/\bclick(?:\s+on)?\s+(?:the\s+)?["“']?Skip["”']?(?:\s+button)?/gi, 'select "Skip"')
+      // "click here to" / "click the link" -> neutral phrasing
+      .replace(/\bclick\s+here\s+to\b/gi, 'you can')
+      .replace(/\bclick\s+(?:on\s+)?(?:the\s+)?link\b/gi, 'use the link')
+      // Any remaining bare "click" -> "select" (last resort)
+      .replace(/\bclick\b/gi, 'select')
       // Remove [Your Title], [Your Title Here], [Title], etc.
       .replace(/\n?\[Your Title(?:\s+Here)?\]/gi, '')
       .replace(/\n?\[Title\]/gi, '')
@@ -900,7 +908,7 @@ CONTEXT:
 - The recipient's first name is "${firstName}"
 - You must naturally include this link in the reply: ${campaignLink}
 - The link is where the recipient can schedule a meeting AND review our project requirements
-- IMPORTANT: On that page there is a "Skip" button. If they would rather review the requirements FIRST (before booking), they can click "Skip" to go straight to the requirements on the next page. Give them BOTH options: book a time now, or click Skip to review the requirements first.
+- IMPORTANT: On that page there is a "Skip" option. If they would rather review the requirements FIRST (before booking), they can use "Skip" to go straight to the requirements on the next page. Give them BOTH options: book a time now, or use Skip to review the requirements first. NEVER use the word "click" (it triggers spam filters) — say "Skip" / "select Skip" / "choose Skip" instead.
 ${researchBlock}${trainingExamples || ''}
 
 INCOMING EMAIL:
@@ -916,7 +924,7 @@ RULES:
 4. Sound like a real person — not a template, not robotic
 5. Acknowledge what they said specifically (show you read their email)${research && research.summary ? `\n5b. Using the COMPANY RESEARCH, name the SPECIFIC service ${research.companyName || 'their company'} offers that you are interested in, and express that you'd like to engage them for it (you are the interested client). Reference their company by its REAL name only — never a slogan.` : ''}
 6. When mentioning the link, ALWAYS use language about scheduling a meeting AND reviewing requirements. The reply must contain the words "schedule" (or "scheduling") and "requirements" somewhere in the text. Work them in naturally.
-6b. Also mention the "Skip" option in one natural sentence: tell them if they'd prefer to review the requirements first before booking, they can just click "Skip" on that page to see them on the next page. Keep it light and optional — one sentence, do not over-explain.
+6b. Mention the "Skip" option in ONE light, natural sentence, and phrase it DIFFERENTLY every time — never reuse the same wording twice. Rework it in your own words so it never sounds like a canned/template line. The idea to convey (vary the exact words): if they'd rather look over the requirements before booking, they can use "Skip" on that page to view them first. Vary the verb and structure naturally, e.g. "prefer to see the requirements first — just Skip past the calendar", "no rush to book; select Skip to review the requirements first", "if you'd like the details before scheduling, Skip straight to them on the next page", "feel free to hit Skip if you want to read through the requirements before picking a time". NEVER use the word "click" (spam trigger) — use "select Skip" / "choose Skip" / "hit Skip" / "just Skip" / "Skip past". Keep it to one sentence, do not over-explain.
 7. Sign off with EXACTLY "${personaName}"${personaTitle ? ` on the next line "${personaTitle}"` : ' — do NOT add any job title, company name, or position. Just the name, nothing else after it'}. Never write "[Your Title]" or any bracket placeholder. Never invent a title or company.
 8. Match the tone of the incoming email (formal if they're formal, casual if casual)
 9. Do NOT use exclamation marks excessively
