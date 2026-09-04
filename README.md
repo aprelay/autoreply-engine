@@ -78,15 +78,21 @@ For every reply, the engine researches the sender's company website and uses it 
 4. Inject a `COMPANY RESEARCH` block into the AI prompt so the reply naturally references the sender's business, while still using "schedule" + "requirements" language and the campaign URL.
 5. If the site can't be reached / has no usable content → fall back to the normal reply (still asks them to book).
 
-**Caching:** Results are cached in a new `domain_cache` table (`domain`, `company_name`, `summary`, `status`, `fetched_at`) with a 30-day TTL. Repeat senders from the same domain are instant (~0ms) and don't re-scrape. Negative results (dead site) are also cached to avoid hammering.
+**Caching (v2.3 — split TTL):** Results are cached in a `domain_cache` table (`domain`, `company_name`, `summary`, `status`, `fetched_at`). **Successful** scrapes are trusted for **30 days**; **negative** results (unreachable/empty) expire after only **6 hours** so a single transient failure no longer poisons a sender for a month. Lingering negative rows are also **purged on boot**. Repeat senders from the same domain are instant (~0ms).
 
-**Performance:** Cached = ~0ms · first-time normal site = ~1–3s · slow/dead site = capped at 8s (12s overall) then falls back.
+**Performance:** Cached = ~0ms · first-time normal site = ~1–4s · slow/blocked site = capped at 12s (20s overall) then falls back.
 
-**Safety / non-breaking:** Implemented as a separate module (`src/domain-research.js`) with **no new npm dependencies** (uses built-in `fetch` + regex HTML stripping). The whole operation is wrapped in try/catch and hard timeouts — it can never crash a reply or stall the send loop. Worst case is identical to the pre-v2.2 behavior.
+**Known limitation — WAF / bot blocks:** Some company sites sit behind Cloudflare/Akamai WAFs that **block requests from datacenter IPs** (Railway's servers). Those sites return HTTP 403/503 to any server-side `fetch` and cannot be scraped without a headless browser — the reply falls back to the normal (still books-a-meeting) message. Example: `carlsonfinancial.com` returns 403 to Railway. This is a hosting/IP limitation, not a code bug.
 
-**Toggle:** Per-tenant setting `domain_research_enabled` (default **on**). Set it to `false`/`0`/`off` in the `settings` table for a tenant to disable and revert that tenant to plain replies.
+**Diagnostics & cache tools (v2.3):**
+- `POST /api/domain-research/test` `{ "email": "..." }` — live, cache-bypassing preview of what research the engine would gather; returns `found`, `company_name`, `summary`, and a `reason` string on failure (e.g. `HTTP 403 (likely bot/WAF block on server IP)`, `timeout after 12000ms`).
+- `POST /api/domain-research/clear` `{ "domain": "..." }` (omit `domain` to clear ALL) — wipe cached research so the next reply re-scrapes.
 
-**Files touched:** `src/domain-research.js` (new), `src/ai-classifier.js` (`generateReply` + `buildReplyPrompt` now accept/inject research; added `isDomainResearchEnabled`).
+**Safety / non-breaking:** Separate module (`src/domain-research.js`), **no new npm dependencies** (built-in `fetch` + regex HTML stripping). Wrapped in try/catch and hard timeouts — can never crash a reply or stall the send loop.
+
+**Toggle:** Per-tenant setting `domain_research_enabled` (default **on**), also available in the dashboard (Domain Research card). Set to `false`/`0`/`off` to revert a tenant to plain replies.
+
+**Files touched:** `src/domain-research.js` (new), `src/ai-classifier.js` (`generateReply` + `buildReplyPrompt` inject research; `isDomainResearchEnabled`; `cleanReply` strips markdown links/emphasis), `src/server.js` (test + clear endpoints).
 
 ---
 
