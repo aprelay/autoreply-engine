@@ -8,7 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { globalStmts, logActivity, getTenantAIConfig, getTenantCampaignUrls, getAccountCampaignUrls, getTenantStmts, tenantStmts } from './database.js';
-import { getDomainResearch } from './domain-research.js';
+import { getDomainResearch, getDomainResearchForEmail } from './domain-research.js';
 
 // ─── Per-tenant AI provider cache ───
 const providerCache = new Map(); // tenantId → { type, apiKey, model, baseUrl }
@@ -750,14 +750,17 @@ export async function generateReply(email, account, tenantId = 1) {
   const trainingExamples = getTrainingExamples(tenantId);
 
   // ─── Domain research: visit the sender's website to personalize the reply ───
-  // Best-effort. Returns null (→ normal reply) if disabled, free-email, or scrape fails.
+  // Best-effort. Tries the sender's own domain first, then falls back to the real
+  // company found in the email SIGNATURE (handles relays like offsitehr.com whose
+  // signature is the real company, e.g. "95 Percent Group"). Returns null (→ normal
+  // reply) if disabled, free-email/relay with no signature company, or scrape fails.
   let research = null;
   if (isDomainResearchEnabled(tenantId)) {
-    research = await getDomainResearch(email.from_email, tenantId);
+    research = await getDomainResearchForEmail(email, tenantId);
   }
 
   console.log(`[REPLY] T${tenantId} Using campaign URL: ${campaignLink}`);
-  if (research) console.log(`[REPLY] T${tenantId} Personalizing with research on ${research.domain}${research.companyName ? ` (${research.companyName})` : ''}`);
+  if (research) console.log(`[REPLY] T${tenantId} Personalizing with research on ${research.domain}${research.companyName ? ` (${research.companyName})` : ''}${research.source === 'signature' ? ' [via signature]' : ''}`);
   if (!rawFirstName) console.log(`[REPLY] T${tenantId} Could not extract first name for ${email.from_email} — using "there"`);
   if (trainingExamples) console.log(`[REPLY] T${tenantId} Including ${(trainingExamples.match(/--- Example/g)||[]).length} training example(s) in prompt`);
 

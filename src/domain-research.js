@@ -107,6 +107,70 @@ export function isFreeEmailDomain(domain) {
   return !!domain && FREE_EMAIL_DOMAINS.has(domain);
 }
 
+// Domains that are infrastructure/relays, not the sender's real company.
+// If the "from" address uses one of these, the real company is usually in the
+// signature (e.g. bear@offsitehr.com whose signature is "95 Percent Group").
+const RELAY_DOMAINS = new Set([
+  'offsitehr.com', 'sendgrid.net', 'mailgun.org', 'amazonses.com',
+  'sparkpostmail.com', 'mandrillapp.com', 'sendinblue.com', 'mailchimp.com',
+  'constantcontact.com', 'hubspotemail.net', 'salesloft.com', 'outreach.io',
+  'yesware.com', 'mixmax.com', 'apollo.io', 'reply.io', 'mailshake.com',
+]);
+
+export function isRelayDomain(domain) {
+  return !!domain && RELAY_DOMAINS.has(domain);
+}
+
+// TLDs / hosts we never treat as a "company" domain when scraping signatures.
+const SKIP_LINK_HOSTS = [
+  'calendly.com', 'cal.com', 'zoom.us', 'teams.microsoft.com', 'meet.google.com',
+  'linkedin.com', 'twitter.com', 'x.com', 'facebook.com', 'instagram.com',
+  'youtube.com', 'youtu.be', 'google.com', 'goo.gl', 'bit.ly', 'lnkd.in',
+  't.co', 'wa.me', 'maps.google.com', 'apple.com', 'microsoft.com',
+  'hubspot.com', 'docusign.net', 'schedulerbwaarchitectus.it.com',
+];
+
+// ─── Pull candidate company domains out of an email body/signature ───
+// Looks at email addresses in the signature AND bare/linked URLs, ranks them,
+// and returns a de-duplicated list of likely company domains (best first).
+export function extractSignatureDomains(bodyText, excludeDomain = '') {
+  if (!bodyText || typeof bodyText !== 'string') return [];
+  const text = bodyText.slice(0, 6000); // signatures live near the end but cap for safety
+  const scores = new Map(); // domain → score
+
+  const bump = (rawDomain, pts) => {
+    if (!rawDomain) return;
+    let d = rawDomain.toLowerCase().trim().replace(/^www\./, '');
+    // Normalize to registrable-ish domain (strip common mail sub-hosts)
+    const parts = d.split('.');
+    if (parts.length >= 3 && ['mail', 'email', 'smtp', 'mx', 'e', 'em', 'go', 'links', 'link'].includes(parts[0])) {
+      d = parts.slice(1).join('.');
+    }
+    if (!d || d.split('.').length < 2) return;
+    if (d === excludeDomain) return;
+    if (isFreeEmailDomain(d) || isRelayDomain(d)) return;
+    if (SKIP_LINK_HOSTS.some((h) => d === h || d.endsWith('.' + h))) return;
+    scores.set(d, (scores.get(d) || 0) + pts);
+  };
+
+  // 1) Email addresses in the body (strong signal — e.g. gkesler@95percentgroup.com)
+  const emailRe = /[a-z0-9._%+-]+@([a-z0-9.-]+\.[a-z]{2,})/gi;
+  let m;
+  while ((m = emailRe.exec(text)) !== null) bump(m[1], 3);
+
+  // 2) Explicit http(s) links (medium signal)
+  const urlRe = /https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(?:[/?#][^\s"'<>]*)?/gi;
+  while ((m = urlRe.exec(text)) !== null) bump(m[1], 2);
+
+  // 3) Bare "www.company.com" mentions (weaker signal)
+  const bareRe = /\bwww\.([a-z0-9-]+\.[a-z]{2,})\b/gi;
+  while ((m = bareRe.exec(text)) !== null) bump(m[1], 1);
+
+  return [...scores.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([d]) => d);
+}
+
 // Records the reason the most recent scrape failed (surfaced by the /test endpoint
 // so failures like Cloudflare bot-blocks on datacenter IPs are diagnosable).
 let lastFetchError = '';
@@ -302,6 +366,23 @@ function findServiceLink(html, baseUrl) {
 }
 
 // ─── Core: fetch + distill a domain's site into a short summary ───
+// Detect WAF / bot-challenge / error interstitials that return HTTP 200 but
+// contain no real company content (Cloudflare "Client Challenge", "Just a moment",
+// "Access denied", "Attention Required", etc.). Using these as research would
+// produce garbage like company="Client Challenge".
+function isChallengePage(title, text) {
+  const hay = `${title || ''} ${(text || '').slice(0, 500)}`.toLowerCase();
+  const markers = [
+    'client challenge', 'just a moment', 'attention required',
+    'checking your browser', 'enable javascript and cookies',
+    'access denied', 'ddos protection', 'cf-browser-verification',
+    'a required part of this site couldn', 'please turn javascript on',
+    'verifying you are human', 'ray id', 'sorry, you have been blocked',
+    'error 1020', 'this website is using a security service',
+  ];
+  return markers.some((m) => hay.includes(m));
+}
+
 async function scrapeDomain(domain) {
   lastFetchError = '';
   const roots = [`https://${domain}`, `https://www.${domain}`, `http://${domain}`];
@@ -317,6 +398,12 @@ async function scrapeDomain(domain) {
   const title = extractTitle(html);
   const metaDesc = extractMetaDescription(html);
   let bodyText = htmlToText(html);
+
+  // Reject bot-challenge / security interstitials (HTTP 200 but no real content).
+  if (isChallengePage(title, bodyText)) {
+    lastFetchError = 'bot/WAF challenge page (site blocks server-side access)';
+    return { status: 'error', company_name: '', summary: '', error: lastFetchError };
+  }
 
   // Pull one services/about page for richer detail
   let servicesText = '';
@@ -340,7 +427,12 @@ async function scrapeDomain(domain) {
   if (bodyText) chunks.push(bodyText.slice(0, 1000));
   let summary = chunks.join(' ').replace(/\s+/g, ' ').trim().slice(0, MAX_SUMMARY_CHARS);
 
-  if (!summary && !companyName) return { status: 'empty', company_name: '', summary: '' };
+  // Guard: too little usable content to personalize with (challenge page remnant,
+  // parked/empty site, etc.) → treat as empty so we fall back cleanly.
+  if (summary.length < 80) {
+    lastFetchError = lastFetchError || 'insufficient page content';
+    return { status: 'empty', company_name: '', summary: '' };
+  }
   return { status: 'ok', company_name: companyName, summary };
 }
 
@@ -360,19 +452,17 @@ function isCacheFresh(row) {
   return ageMs < maxMs;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// PUBLIC: getDomainResearch(fromEmail)
-// Returns { domain, companyName, summary } when useful research exists,
-// or null when the reply should fall back to normal behavior.
-// NEVER throws.
-// ═══════════════════════════════════════════════════════════════
-export async function getDomainResearch(fromEmail, tenantId = 1) {
+// ─── Core: research a single domain (cache-aware). Returns
+// { domain, companyName, summary } on success, or null. NEVER throws. ───
+async function researchDomain(domain, tenantId = 1) {
   try {
-    const domain = extractDomain(fromEmail);
     if (!domain) return null;
-
     if (isFreeEmailDomain(domain)) {
       console.log(`[RESEARCH] T${tenantId} ${domain} is a free-email provider — skipping scrape`);
+      return null;
+    }
+    if (isRelayDomain(domain)) {
+      console.log(`[RESEARCH] T${tenantId} ${domain} is a mail relay — skipping (will try signature)`);
       return null;
     }
 
@@ -383,7 +473,6 @@ export async function getDomainResearch(fromEmail, tenantId = 1) {
         console.log(`[RESEARCH] T${tenantId} cache HIT for ${domain} (${cached.summary.length} chars)`);
         return { domain, companyName: cached.company_name, summary: cached.summary };
       }
-      // Cached negative result (empty/error) that's still fresh → don't re-scrape
       console.log(`[RESEARCH] T${tenantId} cache HIT (negative: ${cached.status}) for ${domain} — fallback`);
       return null;
     }
@@ -399,7 +488,7 @@ export async function getDomainResearch(fromEmail, tenantId = 1) {
     ]);
     const ms = Date.now() - started;
 
-    // 3) Cache the outcome (positive or negative) so we don't hammer it
+    // 3) Cache the outcome (positive or negative)
     try {
       cacheStmts.upsert.run({
         domain,
@@ -420,7 +509,64 @@ export async function getDomainResearch(fromEmail, tenantId = 1) {
     console.log(`[RESEARCH] T${tenantId} ${domain} yielded no usable content (${result.status}, ${ms}ms) — fallback`);
     return null;
   } catch (e) {
+    console.warn(`[RESEARCH] researchDomain error for ${domain}: ${e.message}`);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PUBLIC: getDomainResearch(fromEmail)
+// Researches just the sender's email domain (back-compat entry point).
+// Returns { domain, companyName, summary } or null. NEVER throws.
+// ═══════════════════════════════════════════════════════════════
+export async function getDomainResearch(fromEmail, tenantId = 1) {
+  try {
+    const domain = extractDomain(fromEmail);
+    return await researchDomain(domain, tenantId);
+  } catch (e) {
     console.warn(`[RESEARCH] getDomainResearch error for ${fromEmail}: ${e.message}`);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PUBLIC: getDomainResearchForEmail(email)
+// "Real company" override. Tries the sender's own domain first; if that is a
+// free-email/relay domain or yields nothing, it mines the email SIGNATURE/body
+// for the real company domain(s) and researches those instead.
+//   email = { from_email, body_text }
+// Returns { domain, companyName, summary, source } or null. NEVER throws.
+// ═══════════════════════════════════════════════════════════════
+export async function getDomainResearchForEmail(email, tenantId = 1) {
+  try {
+    const fromEmail = email?.from_email || '';
+    const bodyText = email?.body_text || '';
+    const senderDomain = extractDomain(fromEmail);
+
+    // 1) Try the sender's own domain (unless it's clearly a relay/free provider)
+    if (senderDomain && !isRelayDomain(senderDomain) && !isFreeEmailDomain(senderDomain)) {
+      const r = await researchDomain(senderDomain, tenantId);
+      if (r) return { ...r, source: 'sender_domain' };
+    }
+
+    // 2) Fall back to company domains found in the signature/body
+    const candidates = extractSignatureDomains(bodyText, senderDomain || '');
+    if (candidates.length) {
+      console.log(`[RESEARCH] T${tenantId} sender domain unusable — trying signature domains: ${candidates.slice(0, 4).join(', ')}`);
+    }
+    // Try up to 3 best candidates so a single dead site doesn't stop us
+    for (const cand of candidates.slice(0, 3)) {
+      const r = await researchDomain(cand, tenantId);
+      if (r) {
+        console.log(`[RESEARCH] T${tenantId} resolved real company via signature: ${cand} (${r.companyName})`);
+        try { logActivity(tenantId, null, 'domain_research', `Used signature company ${cand} (from ${fromEmail}) for personalized reply`); } catch {}
+        return { ...r, source: 'signature' };
+      }
+    }
+
+    return null;
+  } catch (e) {
+    console.warn(`[RESEARCH] getDomainResearchForEmail error: ${e.message}`);
     return null; // never break a reply
   }
 }

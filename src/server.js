@@ -14,7 +14,7 @@ import {
 import { fetchNewEmails, sendReply, testImapConnection, testSmtpConnection } from './email-engine.js';
 import { classifyEmail, generateReply, resetAIClient } from './ai-classifier.js';
 import { startPolling, stopPolling, triggerAccountPoll, getEngineStatus } from './orchestrator.js';
-import { clearDomainCache, getDomainResearch, getLastFetchError } from './domain-research.js';
+import { clearDomainCache, getDomainResearch, getDomainResearchForEmail, getLastFetchError, extractSignatureDomains } from './domain-research.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -965,27 +965,51 @@ app.post('/api/domain-research/clear', resolveTenantAuth, (req, res) => {
   }
 });
 
-// Live-test what research the engine would gather for a given email/domain.
-// Body: { email }  (or { domain })  → forces a fresh scrape (bypasses cache).
+// Live-test what research the engine would gather (INCLUDING the signature
+// "real company" override). Forces a fresh scrape (bypasses cache).
+// Body (any of):
+//   { email_id }         → loads that stored email (uses its from + body/signature)
+//   { email, body }      → test an address plus a pasted signature/body
+//   { email } | { domain}→ address/domain only (no signature fallback data)
 app.post('/api/domain-research/test', resolveTenantAuth, async (req, res) => {
   try {
-    const email = (req.body?.email || '').trim();
+    let fromEmail = (req.body?.email || '').trim();
+    let bodyText = (req.body?.body || req.body?.body_text || '').trim();
     const domain = (req.body?.domain || '').trim().toLowerCase();
-    const target = email || (domain ? `test@${domain}` : '');
-    if (!target) return res.status(400).json({ error: 'Provide an email or domain' });
-    // Bypass cache for an honest live test
-    clearDomainCache(domain || undefined);
-    const research = await getDomainResearch(target, req.tenantId);
+    const emailId = req.body?.email_id;
+
+    // If an email id is given, load its real from + body so we test the true signature
+    if (emailId) {
+      const stored = getTenantStmts(req.tenantId).getEmailById?.get(emailId, req.tenantId)
+        || db.prepare('SELECT from_email, body_text FROM emails WHERE id = ? AND tenant_id = ?').get(emailId, req.tenantId);
+      if (!stored) return res.status(404).json({ error: 'Email not found' });
+      fromEmail = stored.from_email || fromEmail;
+      bodyText = stored.body_text || bodyText;
+    }
+
+    if (!fromEmail && domain) fromEmail = `test@${domain}`;
+    if (!fromEmail) return res.status(400).json({ error: 'Provide email_id, email, or domain' });
+
+    // Bypass cache for an honest live test: clear the sender domain AND any
+    // candidate signature domains so every hop re-scrapes.
+    const senderDomain = fromEmail.includes('@') ? fromEmail.split('@')[1].toLowerCase() : domain;
+    clearDomainCache(senderDomain || undefined);
+    for (const d of extractSignatureDomains(bodyText, senderDomain)) clearDomainCache(d);
+
+    const research = await getDomainResearchForEmail({ from_email: fromEmail, body_text: bodyText }, req.tenantId);
     if (!research) {
       const reason = getLastFetchError();
+      const sigDomains = extractSignatureDomains(bodyText, senderDomain);
       return res.json({
         success: true, found: false,
-        reason: reason || 'free-email provider or no content',
-        message: `No usable website content found${reason ? ` (${reason})` : ''}. Reply will use the normal fallback.`,
+        reason: reason || 'free-email/relay provider or no content',
+        signature_domains_tried: sigDomains,
+        message: `No usable website content found${reason ? ` (${reason})` : ''}${sigDomains.length ? `. Signature domains tried: ${sigDomains.join(', ')}` : ''}. Reply will use the normal fallback.`,
       });
     }
     res.json({
       success: true, found: true,
+      source: research.source || 'sender_domain',
       domain: research.domain,
       company_name: research.companyName,
       summary: research.summary,
