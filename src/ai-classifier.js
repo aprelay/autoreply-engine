@@ -212,6 +212,41 @@ function validateReplyQuality(replyText, recipientFirstName) {
   return { valid: true };
 }
 
+// ─── Strip quoted reply history from an email body ───
+// A real human reply often quotes the earlier message(s) below it. Those quoted
+// lines frequently contain auto-reply / marketing trigger phrases ("thank you for
+// contacting", "unsubscribe", etc.) that DON'T describe the NEW message on top.
+// Matching against the full body misclassifies genuine human follow-ups as
+// auto_reply/newsletter. We keep only the NEW top portion for pattern matching.
+function stripQuotedText(rawBody) {
+  if (!rawBody || typeof rawBody !== 'string') return '';
+  const lines = rawBody.split(/\r?\n/);
+  const kept = [];
+  // Common "start of quoted history" markers (Outlook, Gmail, generic clients)
+  const quoteHeaderRe = new RegExp(
+    [
+      '^\\s*-{2,}\\s*original message\\s*-{2,}',      // -------- Original message --------
+      '^\\s*on .+ wrote:\\s*$',                          // On <date>, <person> wrote:
+      '^\\s*on .+,.+<[^>]+>\\s*wrote:',                 // On ... <email> wrote:
+      '^\\s*from:\\s.+',                                  // From: ... (quoted header block)
+      '^\\s*_{5,}\\s*$',                                  // ______ divider
+      '^\\s*sent from my ',                              // mobile signature boundary-ish
+      '^\\s*>{1,}',                                       // > quoted lines
+      '^\\s*\\*?from:\\*?\\s',                           // *From:* (some HTML→text)
+      '^\\s*get outlook for ',                           // Outlook mobile footer
+    ].join('|'),
+    'i'
+  );
+  for (const line of lines) {
+    if (quoteHeaderRe.test(line)) break; // stop at the first quoted-history marker
+    kept.push(line);
+  }
+  const result = kept.join('\n').trim();
+  // If stripping left almost nothing (e.g. top-posted reply was just "see below"),
+  // fall back to the original so we don't lose real signal.
+  return result.length >= 15 ? result : rawBody;
+}
+
 // ─── Rule-based pre-classification (header analysis) ───
 function preClassifyByHeaders(email) {
   let headers = {};
@@ -274,7 +309,8 @@ function preClassifyByHeaders(email) {
     }
   }
 
-  const body = (email.body_text || '').toLowerCase().substring(0, 2000);
+  // IMPORTANT: match against the NEW reply text only, not quoted history below it.
+  const body = stripQuotedText(email.body_text || '').toLowerCase().substring(0, 2000);
   const autoBodyPatterns = [
     { pattern: 'this is an automated message', type: 'auto_reply' },
     { pattern: 'this is an automatic email', type: 'auto_reply' },
@@ -360,7 +396,9 @@ function preClassifyByHeaders(email) {
 // ─── Positive-signal check: does this look like a real human reply? ───
 function looksLikeRealReply(email) {
   const from = (email.from_email || '').toLowerCase();
-  const bodyText = (email.body_text || '');
+  // Analyze the NEW reply text only (strip quoted history so auto-ack phrases in
+  // the quoted earlier message don't wrongly penalize a genuine human follow-up).
+  const bodyText = stripQuotedText(email.body_text || '');
   const bodyLower = bodyText.toLowerCase().substring(0, 3000);
 
   let score = 0;
@@ -452,12 +490,20 @@ function looksLikeRealReply(email) {
 
 // ─── AI Classification ───
 async function aiClassify(tenantId, email) {
+  // Show the AI the NEW reply text first (quoted history stripped), then a little
+  // full context. This prevents auto-reply/marketing phrases in the QUOTED older
+  // message from making a genuine human follow-up look automated.
+  const newText = stripQuotedText(email.body_text || '');
   const prompt = `You are an email classification system. Analyze this incoming email and determine if it's a REAL human reply that needs a response, or an automated/system message that should be ignored.
 
 FROM: ${email.from_name} <${email.from_email}>
 SUBJECT: ${email.subject}
-BODY:
-${(email.body_text || '').substring(0, 3000)}
+
+NEWEST MESSAGE (this is what the sender just wrote — classify based PRIMARILY on this, ignore quoted history):
+${newText.substring(0, 2000)}
+
+FULL BODY (may include quoted earlier messages — for context only):
+${(email.body_text || '').substring(0, 2500)}
 
 Classify as ONE of:
 - "real_reply" — A real person writing a business email, asking questions, requesting info, following up. NEEDS a reply.
