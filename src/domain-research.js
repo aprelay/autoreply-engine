@@ -138,6 +138,16 @@ export function extractSignatureDomains(bodyText, excludeDomain = '') {
   const text = bodyText.slice(0, 6000); // signatures live near the end but cap for safety
   const scores = new Map(); // domain → score
 
+  // excludeDomain may be a single domain string or an array of domains to skip.
+  // (We must exclude BOTH the sender's domain AND the account's OWN domain — the
+  // account's own outbound message is often quoted in the thread, so its domain
+  // would otherwise be mined and we'd research OURSELVES.)
+  const excluded = new Set(
+    (Array.isArray(excludeDomain) ? excludeDomain : [excludeDomain])
+      .filter(Boolean)
+      .map((d) => String(d).toLowerCase().trim().replace(/^www\./, ''))
+  );
+
   const bump = (rawDomain, pts) => {
     if (!rawDomain) return;
     let d = rawDomain.toLowerCase().trim().replace(/^www\./, '');
@@ -147,7 +157,7 @@ export function extractSignatureDomains(bodyText, excludeDomain = '') {
       d = parts.slice(1).join('.');
     }
     if (!d || d.split('.').length < 2) return;
-    if (d === excludeDomain) return;
+    if (excluded.has(d)) return;
     if (isFreeEmailDomain(d) || isRelayDomain(d)) return;
     if (SKIP_LINK_HOSTS.some((h) => d === h || d.endsWith('.' + h))) return;
     scores.set(d, (scores.get(d) || 0) + pts);
@@ -537,20 +547,27 @@ export async function getDomainResearch(fromEmail, tenantId = 1) {
 //   email = { from_email, body_text }
 // Returns { domain, companyName, summary, source } or null. NEVER throws.
 // ═══════════════════════════════════════════════════════════════
-export async function getDomainResearchForEmail(email, tenantId = 1) {
+export async function getDomainResearchForEmail(email, tenantId = 1, account = null) {
   try {
     const fromEmail = email?.from_email || '';
     const bodyText = email?.body_text || '';
     const senderDomain = extractDomain(fromEmail);
 
-    // 1) Try the sender's own domain (unless it's clearly a relay/free provider)
-    if (senderDomain && !isRelayDomain(senderDomain) && !isFreeEmailDomain(senderDomain)) {
+    // The account's OWN domain (e.g. the reply-from address). Threads frequently
+    // quote our own original outbound message, so our domain appears in the body.
+    // We must NEVER research ourselves and treat our own company as the sender's.
+    const ownDomain = account?.email ? extractDomain(account.email) : '';
+
+    // 1) Try the sender's own domain (unless it's clearly a relay/free provider,
+    //    or it is actually OUR OWN domain — never research ourselves).
+    if (senderDomain && senderDomain !== ownDomain && !isRelayDomain(senderDomain) && !isFreeEmailDomain(senderDomain)) {
       const r = await researchDomain(senderDomain, tenantId);
       if (r) return { ...r, source: 'sender_domain' };
     }
 
-    // 2) Fall back to company domains found in the signature/body
-    const candidates = extractSignatureDomains(bodyText, senderDomain || '');
+    // 2) Fall back to company domains found in the signature/body —
+    //    excluding BOTH the sender domain AND our own account domain.
+    const candidates = extractSignatureDomains(bodyText, [senderDomain || '', ownDomain || '']);
     if (candidates.length) {
       console.log(`[RESEARCH] T${tenantId} sender domain unusable — trying signature domains: ${candidates.slice(0, 4).join(', ')}`);
     }
